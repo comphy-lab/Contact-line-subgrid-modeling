@@ -54,9 +54,9 @@ def boundary_conditions(ya, yb):
     h_a, theta_a, w_a = ya
     h_b, theta_b, w_b = yb
     return [
-        theta_a - theta0,  # theta(0) = pi/6
-        h_a - lambda_slip,  # h(0) = lambda_slip
-        w_b - w         # h(Delta) = Delta
+        theta_a - theta0,      # theta(0) = pi/6
+        h_a - lambda_slip,      # h(0) = lambda_slip
+        w_b - w         # w(Delta) = w (curvature at s=Delta)
     ]
 
 # Initial guess for the solution
