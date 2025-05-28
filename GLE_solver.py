@@ -36,7 +36,7 @@ def GLE(s, y):
     h, t, w = y
     dh_ds = np.sin(t) # dh/ds = sin(theta)
     dt_ds = w # omega = dtheta/ds
-    dw_ds = 3 * Ca * f(t, mu_r) / (h * (h + 3 * lambda_slip))
+    dw_ds = 3 * Ca * f(t, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(t)
     return [dh_ds, dt_ds, dw_ds]
 
 # Set up the solver parameters
@@ -51,12 +51,12 @@ Delta = 1e-4  # Miminum grid cell size
 # Boundary conditions
 def boundary_conditions(ya, yb):
     # ya corresponds to s = 0, yb corresponds to s = Delta
-    h_a, theta_a, w_a = ya
-    h_b, theta_b, w_b = yb
+    h_a, theta_a, w_a = ya # boundary conditions at s = 0
+    h_b, theta_b, w_b = yb # boundary conditions at s = Delta
     return [
-        theta_a - theta0,      # theta(0) = pi/6
-        h_a - lambda_slip,      # h(0) = lambda_slip
-        w_b - w         # w(Delta) = w (curvature at s=Delta)
+        theta_a - theta0,      # theta(0) = pi/6, this forces theta_a to be essentially theta0. We set. 
+        h_a - lambda_slip,      # h(0) = lambda_slip, this forces h_a to be essentially lambda_slip. We set.
+        w_b - w         # w(Delta) = w (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w, comes from the DNS.
     ]
 
 # Initial guess for the solution
@@ -91,3 +91,6 @@ plt.xlabel('s')
 plt.ylabel(r'$\theta(s)$')
 plt.grid()
 plt.show()
+
+
+# Note: difference between this code and the ones from our [coalleauges](https://doi.org/10.1140/epjs/s11734-024-01443-5) is that we are solving for a specific control parameter whereas they use continuation method to track solution branches as parameters vary.
