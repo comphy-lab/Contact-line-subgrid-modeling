@@ -35,8 +35,8 @@ def Uy(Theta, Phi):
 Theta_grid = []
 Phi_grid = []
 for theta in Theta:
-    phi_values = np.linspace(0, Theta, 100)
-    Theta_grid.extend([Theta] * len(phi_values))
+    phi_values = np.linspace(0, theta, 100)
+    Theta_grid.extend([theta] * len(phi_values))
     Phi_grid.extend(phi_values)
 
 Theta_grid = np.array(Theta_grid)
