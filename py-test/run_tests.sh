@@ -7,7 +7,9 @@ echo "Running Contact Line Subgrid Modeling Tests..."
 echo "============================================"
 
 # Add parent directory to PYTHONPATH so tests can import the modules
-export PYTHONPATH="${PYTHONPATH}:$(dirname $(pwd))"
+PARENT_DIR="$(dirname "$(pwd)")"
+PYTHONPATH="${PYTHONPATH}:${PARENT_DIR}"
+export PYTHONPATH
 
 # Run pytest with verbose output and coverage if available
 if command -v pytest &> /dev/null; then
