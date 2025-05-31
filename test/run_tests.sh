@@ -20,5 +20,20 @@ else
     exit 1
 fi
 
-# Return exit code from pytest
-exit $?
+# Capture pytest exit code
+PYTEST_EXIT_CODE=$?
+
+echo ""
+echo "Running C unit tests via Makefile..."
+echo "=================================="
+make test_c
+MAKE_EXIT_CODE=$?
+
+# Return non-zero if either pytest or make failed
+if [ $PYTEST_EXIT_CODE -ne 0 ] || [ $MAKE_EXIT_CODE -ne 0 ]; then
+    echo "One or more test suites failed."
+    exit 1
+else
+    echo "All test suites passed."
+    exit 0
+fi
