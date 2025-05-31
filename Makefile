@@ -4,7 +4,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -g -std=c99 -Isrc-local $(shell pkg-config --cflags gsl)
-LDFLAGS = $(shell pkg-config --libs gsl)
+LDFLAGS = $(shell pkg-config --libs gsl) -Wl,-rpath,/opt/homebrew/Cellar/gsl/2.8/lib
 
 # Check if GSL BVP is available
 GSL_BVP_CHECK := $(shell echo "\#include <gsl/gsl_bvp.h>" | $(CC) -E -x c - >/dev/null 2>&1 && echo "yes" || echo "no")

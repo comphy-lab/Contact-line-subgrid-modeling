@@ -73,8 +73,9 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     if not GUI:
         import matplotlib
         matplotlib.use('Agg')  # Use non-interactive backend
-        # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
+    
+    # Create output directory if it doesn't exist (always create for CSV)
+    os.makedirs(output_dir, exist_ok=True)
 
     # Initial guess for the solution
     s_range_local = np.linspace(0, 4*Delta, 100000)  # Define the range of s
@@ -113,6 +114,12 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     else:
         plt.savefig(os.path.join(output_dir, 'GLE_theta_profile.png'), dpi=150, bbox_inches='tight')
         plt.close()
+
+    # Save data to CSV file
+    csv_data = np.column_stack((s_values_local, h_values_local, theta_values_local))
+    csv_path = os.path.join(output_dir, 'data-python.csv')
+    np.savetxt(csv_path, csv_data, delimiter=',', header='s,h,theta', comments='')
+    print(f"Data saved to: {csv_path}")
 
     return solution, s_values_local, h_values_local, theta_values_local, w_values_local
 

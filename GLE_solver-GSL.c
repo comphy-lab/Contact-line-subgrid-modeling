@@ -70,8 +70,9 @@ double f_combined(double theta, double mu_r) {
     
     // Guard against division by zero
     if (fabs(denominator) < 1e-15) {
-        fprintf(stderr, "Warning: Near-zero denominator in f function at theta=%f\n", theta);
-        return 0.0;
+        // For very small denominators, use L'Hôpital's rule or return a large value
+        // to prevent the solver from exploring this region
+        return 1e6;
     }
     
     return numerator / denominator;
@@ -98,7 +99,6 @@ int gle_system(double s, const double y[], double dyds[], void *params) {
     
     // Guard against division by zero
     if (fabs(h_factor) < 1e-20) {
-        fprintf(stderr, "Warning: Near-zero h factor at s=%f, h=%e\n", s, h);
         return GSL_EBADFUNC;
     }
     
@@ -189,42 +189,60 @@ int solve_gle_bvp_and_save(size_t num_nodes, const char *h_output_path,
         printf("Number of iterations: %zu\n", gsl_bvp_niter(bvp_ws));
     }
     
-    // Save results to files
-    FILE *h_file = fopen(h_output_path, "w");
-    FILE *theta_file = fopen(theta_output_path, "w");
+    // Save results to a single file
+    FILE *data_file = fopen("output/data-c-gsl.csv", "w");
     
-    if (!h_file || !theta_file) {
-        fprintf(stderr, "Error opening output files\n");
-        if (h_file) fclose(h_file);
-        if (theta_file) fclose(theta_file);
+    if (!data_file) {
+        fprintf(stderr, "Error opening output file\n");
         gsl_bvp_free(bvp_ws);
         gsl_vector_free(y_initial);
         gsl_vector_free(solution);
         return GSL_EFAILED;
     }
     
-    // Write headers
-    fprintf(h_file, "s,h\n");
-    fprintf(theta_file, "s,theta_deg\n");
+    // Write header
+    fprintf(data_file, "s,h,theta\n");
     
     // Write data
     for (size_t j = 0; j < num_nodes; ++j) {
         double s_j = j * S_MAX / (double)(num_nodes - 1);
         double h_j = gsl_vector_get(solution, j * num_components + 0);
         double theta_j = gsl_vector_get(solution, j * num_components + 1);
-        double theta_deg = theta_j * 180.0 / M_PI;
         
-        fprintf(h_file, "%.12e,%.12e\n", s_j, h_j);
-        fprintf(theta_file, "%.12e,%.6f\n", s_j, theta_deg);
+        fprintf(data_file, "%.12e,%.12e,%.12e\n", s_j, h_j, theta_j);
     }
     
-    fclose(h_file);
-    fclose(theta_file);
+    fclose(data_file);
     
     if (verbose) {
-        printf("Results saved to:\n");
-        printf("  h(s): %s\n", h_output_path);
-        printf("  theta(s): %s\n", theta_output_path);
+        printf("Results saved to: output/data-c-gsl.csv\n");
+    }
+    
+    // Keep the old file format for backward compatibility
+    FILE *h_file = fopen(h_output_path, "w");
+    FILE *theta_file = fopen(theta_output_path, "w");
+    
+    if (h_file && theta_file) {
+        fprintf(h_file, "s,h\n");
+        fprintf(theta_file, "s,theta_deg\n");
+        
+        for (size_t j = 0; j < num_nodes; ++j) {
+            double s_j = j * S_MAX / (double)(num_nodes - 1);
+            double h_j = gsl_vector_get(solution, j * num_components + 0);
+            double theta_j = gsl_vector_get(solution, j * num_components + 1);
+            double theta_deg = theta_j * 180.0 / M_PI;
+            
+            fprintf(h_file, "%.12e,%.12e\n", s_j, h_j);
+            fprintf(theta_file, "%.12e,%.6f\n", s_j, theta_deg);
+        }
+        
+        fclose(h_file);
+        fclose(theta_file);
+        
+        if (verbose) {
+            printf("  h(s): %s\n", h_output_path);
+            printf("  theta(s): %s\n", theta_output_path);
+        }
     }
     
     // Clean up
@@ -261,7 +279,24 @@ int solve_gle_bvp_and_save(size_t num_nodes, const char *h_output_path,
     int status = solve_gle_shooting_method(&params, S_MAX, &s_out, &h_out, &theta_out, &n_points);
     
     if (status == 0) {
-        // Write results to files
+        // Write results to single file
+        FILE *data_file = fopen("output/data-c-gsl.csv", "w");
+        
+        if (data_file) {
+            fprintf(data_file, "s,h,theta\n");
+            
+            for (int i = 0; i < n_points; i++) {
+                fprintf(data_file, "%.12e,%.12e,%.12e\n", s_out[i], h_out[i], theta_out[i]);
+            }
+            
+            fclose(data_file);
+            
+            if (verbose) {
+                printf("Results saved to: output/data-c-gsl.csv (using shooting method)\n");
+            }
+        }
+        
+        // Also write to separate files for backward compatibility
         FILE *h_file = fopen(h_output_path, "w");
         FILE *theta_file = fopen(theta_output_path, "w");
         
@@ -276,10 +311,6 @@ int solve_gle_bvp_and_save(size_t num_nodes, const char *h_output_path,
             
             fclose(h_file);
             fclose(theta_file);
-            
-            if (verbose) {
-                printf("Results saved using shooting method\n");
-            }
         }
         
         free(s_out);
@@ -314,7 +345,8 @@ int gle_ode_system_python(double s, const double y[], double dyds[], void *param
     }
     
     // Avoid theta outside reasonable range
-    if (theta < 0.0 || theta > M_PI) {
+    // For contact line problems, theta should stay between 0 and pi
+    if (theta < 1e-6 || theta > M_PI - 1e-6) {
         return GSL_EDOM;
     }
     
