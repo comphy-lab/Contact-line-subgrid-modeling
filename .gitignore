@@ -120,3 +120,25 @@ test/test_output/
 # Explicitly allow Claude files
 !.claude/
 !CLAUDE.md
+
+# CMake build files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.cmake
+
+# C/C++ compiled files
+*.o
+*.a
+*.exe
+gle_solver_main
+test_gle_math_c
+test_gle_solver_c
+
+# CSV output files from C solver
+gle_h_profile.csv
+gle_theta_profile.csv
+
+# Testing output
+Testing/
+CTestTestfile.cmake
