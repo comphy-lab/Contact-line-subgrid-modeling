@@ -54,18 +54,18 @@ def boundary_conditions(ya, yb):
     h_a, theta_a, w_a = ya # boundary conditions at s = 0
     h_b, theta_b, w_b = yb # boundary conditions at s = Delta
     return [
-        theta_a - theta0,      # theta(0) = pi/6, this forces theta_a to be essentially theta0. We set. 
+        theta_a - theta0,      # theta(0) = pi/6, this forces theta_a to be essentially theta0. We set.
         h_a - lambda_slip,      # h(0) = lambda_slip, this forces h_a to be essentially lambda_slip. We set.
         w_b - w         # w(Delta) = w (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w, comes from the DNS.
     ]
 
 def run_solver_and_plot(GUI=False, output_dir='output'):
     """Run the solver and either display or save plots
-    
+
     Args:
         GUI (bool): If True, display plots. If False, save to files.
         output_dir (str): Directory to save plots when GUI=False
-    
+
     Returns:
         tuple: (solution, s_values, h_values, theta_values, w_values)
     """
@@ -75,9 +75,9 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
         matplotlib.use('Agg')  # Use non-interactive backend
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
-    
+
     # Initial guess for the solution
-    s_range_local = np.linspace(0, 4*Delta, 10000)  # Define the range of s
+    s_range_local = np.linspace(0, 4*Delta, 100000)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
     y_guess_local[0, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
     y_guess_local[1, :] = np.pi / 6  # Initial guess for theta
@@ -113,7 +113,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     else:
         plt.savefig(os.path.join(output_dir, 'GLE_theta_profile.png'), dpi=150, bbox_inches='tight')
         plt.close()
-    
+
     return solution, s_values_local, h_values_local, theta_values_local, w_values_local
 
 # Main execution
@@ -122,12 +122,12 @@ if __name__ == "__main__":
     gui_mode = False  # Default is no GUI
     if len(sys.argv) > 1 and sys.argv[1] == '--gui':
         gui_mode = True
-    
+
     solution, s_values_final, h_values_final, theta_values_final, w_values_final = run_solver_and_plot(GUI=gui_mode)
-    
+
     print(f"Solution converged: {solution.success}")
     print(f"Number of iterations: {solution.niter}")
-    
+
     if not gui_mode:
         print("Plots saved in 'output' directory")
 
