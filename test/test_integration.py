@@ -17,7 +17,7 @@ class TestIntegration:
     def setup_and_teardown(self):
         """Setup and cleanup for each test"""
         # Setup: Create test output directory
-        self.test_output_dir = 'test_plots'
+        self.test_output_dir = 'test_output'
         os.makedirs(self.test_output_dir, exist_ok=True)
         
         yield
@@ -73,22 +73,22 @@ class TestIntegration:
     
     def test_huh_scriven_runs_without_error(self):
         """Test that Huh-Scriven velocity calculation runs"""
-        Theta_grid, Phi_grid, Ux_rel_grid, Uy_rel_grid = run_huh_scriven(output_dir=self.test_output_dir)
+        theta_grid_local, phi_grid_local, Ux_rel_grid, Uy_rel_grid = run_huh_scriven(output_dir=self.test_output_dir)
         
         # Check output arrays
-        assert len(Theta_grid) > 0
-        assert len(Phi_grid) > 0
+        assert len(theta_grid_local) > 0
+        assert len(phi_grid_local) > 0
         assert len(Ux_rel_grid) > 0
         assert len(Uy_rel_grid) > 0
         
         # Check shapes match
-        assert Theta_grid.shape == Phi_grid.shape
+        assert theta_grid_local.shape == phi_grid_local.shape
         assert Ux_rel_grid.shape == Uy_rel_grid.shape
-        assert Theta_grid.shape == Ux_rel_grid.shape
+        assert theta_grid_local.shape == Ux_rel_grid.shape
         
         # Check that values are finite
-        assert np.all(np.isfinite(Theta_grid))
-        assert np.all(np.isfinite(Phi_grid))
+        assert np.all(np.isfinite(theta_grid_local))
+        assert np.all(np.isfinite(phi_grid_local))
         assert np.all(np.isfinite(Ux_rel_grid))
         assert np.all(np.isfinite(Uy_rel_grid))
     
@@ -129,11 +129,11 @@ class TestIntegration:
     
     def test_huh_scriven_phi_constraint(self):
         """Test that phi stays within valid range [0, theta]"""
-        Theta_grid, Phi_grid, Ux_rel_grid, Uy_rel_grid = run_huh_scriven(output_dir=self.test_output_dir)
+        theta_grid_local, phi_grid_local, Ux_rel_grid, Uy_rel_grid = run_huh_scriven(output_dir=self.test_output_dir)
         
         # Check that 0 <= phi <= theta for all points
-        assert np.all(Phi_grid >= 0)
-        assert np.all(Phi_grid <= Theta_grid)
+        assert np.all(phi_grid_local >= 0)
+        assert np.all(phi_grid_local <= theta_grid_local)
     
     def test_reproducibility(self):
         """Test that repeated runs give same results"""

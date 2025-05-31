@@ -33,7 +33,7 @@ def Ux(Theta, Phi):
 def Uy(Theta, Phi):
     return Ur(Theta, Phi) * np.sin(Theta-Phi) + Uphi(Theta, Phi) * np.cos(Theta-Phi)
 
-def compute_and_plot(GUI=False, output_dir='plots'):
+def compute_and_plot(GUI=False, output_dir='output'):
     """Compute velocity fields and either display or save plots
     
     Args:
@@ -51,27 +51,27 @@ def compute_and_plot(GUI=False, output_dir='plots'):
         os.makedirs(output_dir, exist_ok=True)
     
     # Create a meshgrid for Theta and Phi
-    Theta_grid = []
-    Phi_grid = []
+    theta_grid_local = []
+    phi_grid_local = []
     for theta in Theta:
         phi_values = np.linspace(0, theta, 100)
-        Theta_grid.extend([theta] * len(phi_values))
-        Phi_grid.extend(phi_values)
+        theta_grid_local.extend([theta] * len(phi_values))
+        phi_grid_local.extend(phi_values)
 
-    Theta_grid = np.array(Theta_grid)
-    Phi_grid = np.array(Phi_grid)
+    theta_grid_local = np.array(theta_grid_local)
+    phi_grid_local = np.array(phi_grid_local)
 
     # Compute Ux, Uy
-    Ux_grid = Ux(Theta_grid, Phi_grid)
-    Uy_grid = Uy(Theta_grid, Phi_grid)
+    Ux_grid = Ux(theta_grid_local, phi_grid_local)
+    Uy_grid = Uy(theta_grid_local, phi_grid_local)
 
     # Compute Ux_rel and Uy_rel
     Ux_rel_grid = -U_p - Ux_grid
     Uy_rel_grid = -Uy_grid
 
     # Convert Theta and Phi to degrees
-    Theta_grid_deg = np.degrees(Theta_grid)
-    Phi_grid_deg = np.degrees(Phi_grid)
+    Theta_grid_deg = np.degrees(theta_grid_local)
+    Phi_grid_deg = np.degrees(phi_grid_local)
 
     # Plot Ux_rel as a scatter plot
     plt.figure(figsize=(10, 5))
@@ -101,7 +101,7 @@ def compute_and_plot(GUI=False, output_dir='plots'):
         plt.savefig(os.path.join(output_dir, 'huh_scriven_Uy_rel.png'), dpi=150, bbox_inches='tight')
         plt.close()
     
-    return Theta_grid, Phi_grid, Ux_rel_grid, Uy_rel_grid
+    return theta_grid_local, phi_grid_local, Ux_rel_grid, Uy_rel_grid
 
 # Main execution
 if __name__ == "__main__":
@@ -113,6 +113,6 @@ if __name__ == "__main__":
     Theta_grid, Phi_grid, Ux_rel_grid, Uy_rel_grid = compute_and_plot(GUI=gui_mode)
     
     if not gui_mode:
-        print(f"Plots saved in 'plots' directory")
+        print(f"Plots saved in 'output' directory")
         print(f"Ux_rel range: [{np.min(Ux_rel_grid):.4f}, {np.max(Ux_rel_grid):.4f}]")
         print(f"Uy_rel range: [{np.min(Uy_rel_grid):.4f}, {np.max(Uy_rel_grid):.4f}]")

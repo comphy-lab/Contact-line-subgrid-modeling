@@ -19,7 +19,7 @@ def f2(theta):
 def f3(theta):
     return theta * (np.pi - theta) + np.sin(theta)**2
 
-# Define f(theta, R) function
+# Define f(theta, mu_r) function
 def f(theta, mu_r):
     numerator = 2 * np.sin(theta)**3 * (mu_r**2 * f1(theta) + 2 * mu_r * f3(theta) + f1(np.pi - theta))
     denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) - f1(np.pi - theta) * f2(theta))
@@ -28,21 +28,19 @@ def f(theta, mu_r):
 # Initial conditions
 h0 = lambda_slip  # h at s = 0
 theta0 = np.pi/6  # theta at s = 0
-kappa0 = 1 #curvature at h=\Delta
 w = 0  # curvature boundary condition at s = \Delta, this needs to be not remain constant, but fed back from the DNS
 
 
 
 # Define the coupled ODEs system
 def GLE(s, y):
-    h, t, w = y
-    dh_ds = np.sin(t) # dh/ds = sin(theta)
-    dt_ds = w # omega = dtheta/ds
-    dw_ds = 3 * Ca * f(t, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(t)
+    h, theta, omega = y
+    dh_ds = np.sin(theta) # dh/ds = sin(theta)
+    dt_ds = omega # omega = dtheta/ds
+    dw_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)
     return [dh_ds, dt_ds, dw_ds]
 
 # Set up the solver parameters
-s_range = (0, 1e-3)  # Integration limits for s
 # Need to set the initial conditions for the ODEs. Since we are setting them at different points, we need 3 as fixed, 3 as guesses
 # \Theta at s=0, h at s=0, dTheta/ds at h=\Delta
 # The guesses follow the known BCs when solved
@@ -52,7 +50,7 @@ Delta = 1e-4  # Miminum grid cell size
 
 # Boundary conditions
 def boundary_conditions(ya, yb):
-    # ya corresponds to s = 0, yb corresponds to s = Delta
+    # ya corresponds to s = 0, yb corresponds to s = 4*Delta
     h_a, theta_a, w_a = ya # boundary conditions at s = 0
     h_b, theta_b, w_b = yb # boundary conditions at s = Delta
     return [
@@ -61,7 +59,7 @@ def boundary_conditions(ya, yb):
         w_b - w         # w(Delta) = w (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w, comes from the DNS.
     ]
 
-def run_solver_and_plot(GUI=False, output_dir='plots'):
+def run_solver_and_plot(GUI=False, output_dir='output'):
     """Run the solver and either display or save plots
     
     Args:
@@ -125,10 +123,10 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == '--gui':
         gui_mode = True
     
-    solution, s_values, h_values, theta_values, w_values = run_solver_and_plot(GUI=gui_mode)
+    solution, s_values_final, h_values_final, theta_values_final, w_values_final = run_solver_and_plot(GUI=gui_mode)
     
     if not gui_mode:
-        print(f"Plots saved in 'plots' directory")
+        print(f"Plots saved in 'output' directory")
         print(f"Solution converged: {solution.success}")
         print(f"Number of iterations: {solution.niter}")
 

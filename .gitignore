@@ -114,8 +114,8 @@ cache/
 *.tmp
 
 # Generated output files
-plots/
-py-test/test_plots/
+output/
+test/test_output/
 
 # Explicitly allow Claude files
 !.claude/
