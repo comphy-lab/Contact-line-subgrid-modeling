@@ -3,6 +3,7 @@ import numpy as np
 import os
 import sys
 import shutil
+import warnings
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,9 +57,9 @@ class TestIntegration:
         """Test that GLE solver creates plot files"""
         solution, _, _, _, _ = run_gle_solver(output_dir=self.test_output_dir)
         
-        # Skip plot check if solver didn't converge
+        # Warn if solver didn't converge but continue testing
         if not solution.success:
-            pytest.skip(f"Skipping plot test - solver did not converge: {solution.message}")
+            warnings.warn(f"GLE solver did not converge: {solution.message}", UserWarning)
         
         # Check that plot files exist
         h_plot_path = os.path.join(self.test_output_dir, 'GLE_h_profile.png')
@@ -70,6 +71,13 @@ class TestIntegration:
         # Check that files have content (size > 0)
         assert os.path.getsize(h_plot_path) > 0
         assert os.path.getsize(theta_plot_path) > 0
+        
+        # Verify PNG file headers
+        with open(h_plot_path, 'rb') as f:
+            assert f.read(8) == b'\x89PNG\r\n\x1a\n', "h_plot is not a valid PNG file"
+        
+        with open(theta_plot_path, 'rb') as f:
+            assert f.read(8) == b'\x89PNG\r\n\x1a\n', "theta_plot is not a valid PNG file"
     
     def test_huh_scriven_runs_without_error(self):
         """Test that Huh-Scriven velocity calculation runs"""
@@ -106,14 +114,51 @@ class TestIntegration:
         # Check that files have content (size > 0)
         assert os.path.getsize(ux_plot_path) > 0
         assert os.path.getsize(uy_plot_path) > 0
+        
+        # Verify PNG file headers
+        with open(ux_plot_path, 'rb') as f:
+            assert f.read(8) == b'\x89PNG\r\n\x1a\n', "Ux_rel plot is not a valid PNG file"
+        
+        with open(uy_plot_path, 'rb') as f:
+            assert f.read(8) == b'\x89PNG\r\n\x1a\n', "Uy_rel plot is not a valid PNG file"
+    
+    def test_plot_file_sizes(self):
+        """Test that plot files have reasonable sizes"""
+        # Run both solvers to generate plots
+        solution, _, _, _, _ = run_gle_solver(output_dir=self.test_output_dir)
+        run_huh_scriven(output_dir=self.test_output_dir)
+        
+        # Define minimum reasonable file size (1KB)
+        min_size = 1024
+        
+        # Check GLE plots if solver converged
+        if solution.success:
+            h_plot_path = os.path.join(self.test_output_dir, 'GLE_h_profile.png')
+            theta_plot_path = os.path.join(self.test_output_dir, 'GLE_theta_profile.png')
+            
+            h_size = os.path.getsize(h_plot_path)
+            theta_size = os.path.getsize(theta_plot_path)
+            
+            assert h_size > min_size, f"h_plot size {h_size} bytes is too small"
+            assert theta_size > min_size, f"theta_plot size {theta_size} bytes is too small"
+        
+        # Check Huh-Scriven plots
+        ux_plot_path = os.path.join(self.test_output_dir, 'huh_scriven_Ux_rel.png')
+        uy_plot_path = os.path.join(self.test_output_dir, 'huh_scriven_Uy_rel.png')
+        
+        ux_size = os.path.getsize(ux_plot_path)
+        uy_size = os.path.getsize(uy_plot_path)
+        
+        assert ux_size > min_size, f"Ux_rel plot size {ux_size} bytes is too small"
+        assert uy_size > min_size, f"Uy_rel plot size {uy_size} bytes is too small"
     
     def test_gle_physical_constraints(self):
         """Test that GLE solution satisfies physical constraints"""
         solution, s_values, h_values, theta_values, w_values = run_gle_solver(output_dir=self.test_output_dir)
         
-        # Skip constraint check if solver didn't converge
+        # Warn if solver didn't converge but still check what we can
         if not solution.success:
-            pytest.skip(f"Skipping physical constraint test - solver did not converge: {solution.message}")
+            warnings.warn(f"GLE solver did not converge: {solution.message} - physical constraints may not be satisfied", UserWarning)
         
         # theta_values is already in radians from the solver
         
@@ -141,9 +186,11 @@ class TestIntegration:
         solution1, s1, h1, theta1, w1 = run_gle_solver(output_dir=self.test_output_dir)
         solution2, s2, h2, theta2, w2 = run_gle_solver(output_dir=self.test_output_dir)
         
-        # Skip if either solver didn't converge
-        if not solution1.success or not solution2.success:
-            pytest.skip("Skipping reproducibility test - solver convergence issues")
+        # Warn if either solver didn't converge but still test reproducibility
+        if not solution1.success:
+            warnings.warn(f"First solver run did not converge: {solution1.message}", UserWarning)
+        if not solution2.success:
+            warnings.warn(f"Second solver run did not converge: {solution2.message}", UserWarning)
         
         # Check that results are identical
         np.testing.assert_array_almost_equal(s1, s2)
