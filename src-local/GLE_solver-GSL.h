@@ -1,45 +1,70 @@
+/**
+ * GLE_solver-GSL.h
+ * 
+ * Header file for the GLE solver implementation
+ * that matches the Python implementation exactly.
+ * 
+ * Author: Claude
+ * Date: 2025-05-31
+ */
+
 #ifndef GLE_SOLVER_GSL_H
 #define GLE_SOLVER_GSL_H
 
 #include <gsl/gsl_vector.h>
 #include <gsl/gsl_multiroots.h>
-// #include <gsl/gsl_bvp.h> // Temporarily commented out if not available
+#include <gsl/gsl_odeiv2.h>
+#include <gsl/gsl_roots.h>
+#include <gsl/gsl_errno.h>
 
-// Define constants used in the GLE system
-#define K_VALUE 1.0
-#define LAMBDA_S_VALUE 0.5
-#define R_VALUE 0.1
+// Physical parameters structure for shooting method
+typedef struct {
+    double Ca;           // Capillary number
+    double lambda_slip;  // Slip length
+    double mu_r;         // Viscosity ratio
+    double Delta;        // Grid cell size
+} gle_parameters;
 
-// Function declarations for the GLE ODE system
-double f1(double w);
-double f2(double w);
-double f3(double w);
-void f_ode(double w, double* f1_val, double* f2_val, double* f3_val);
+// Shooting method structures
+typedef struct {
+    gle_parameters *gle_params;
+    double theta0;       // Initial contact angle
+    double h0;           // Initial film thickness
+    double s_max;        // Maximum arc length
+    gsl_odeiv2_driver *driver; // ODE driver for integration
+} shooting_context;
+
+// Helper functions for f(theta, mu_r) calculation
+double f1_trig(double theta);
+double f2_trig(double theta);
+double f3_trig(double theta);
+double f_combined(double theta, double mu_r);
+
+// ODE system
 int gle_system(double s, const double y[], double dyds[], void *params);
 
-// Function declaration for the boundary conditions
-// void boundary_conditions(const gsl_vector * y_a, const gsl_vector * y_b, gsl_vector * resid, void *params); // BVP related
-
-// Function declaration for the BVP solver
-// int solve_gle_bvp(gsl_vector *y_init); // BVP related
-
-// If GSL BVP is available, use the full function signature
+// Boundary conditions (if GSL BVP is available)
 #ifdef HAVE_GSL_BVP_H
-int solve_gle_bvp_and_save(gsl_vector *y_initial_mesh,
-                           size_t num_components,
-                           size_t num_nodes,
-                           gsl_vector *sol_output,
-                           const char* h_output_path,
-                           const char* theta_output_path);
-#else
-// Fallback for when gsl_bvp.h is not available
-int solve_gle_bvp_and_save(gsl_vector *y_initial_mesh,
-                           size_t num_components,
-                           size_t num_nodes,
-                           gsl_vector *sol_output,
-                           const char* h_output_path,
-                           const char* theta_output_path);
+void boundary_conditions(const gsl_vector *y_a, const gsl_vector *y_b, 
+                        gsl_vector *resid, void *params);
 #endif
 
+// Main solver function
+int solve_gle_bvp_and_save(size_t num_nodes, const char *h_output_path, 
+                          const char *theta_output_path, int verbose);
+
+// ODE system for shooting method (matching Python)
+int gle_ode_system_python(double s, const double y[], double dyds[], void *params);
+
+// Shooting method solver
+int solve_gle_shooting_method(gle_parameters *params, double s_max, 
+                             double **s_out, double **h_out, double **theta_out, 
+                             int *n_points);
+
+// Helper function for shooting residual
+double shooting_residual_function(double omega0, void *params);
+
+// Helper function to integrate ODE
+int integrate_ode(double omega0, shooting_context *ctx, double *h_final, double *theta_final, double *omega_final);
 
 #endif // GLE_SOLVER_GSL_H

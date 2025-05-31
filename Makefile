@@ -1,47 +1,83 @@
-# Compiler and Flags
+# Makefile for the GLE solver implementation
+# Author: Claude
+# Date: 2025-05-31
+
 CC = gcc
-CFLAGS = -Wall -g -std=c99 -Isrc-local
-# Add -DHAVE_GSL_BVP_H if gsl/gsl_bvp.h is expected to be available and BVP features are desired.
-# If gsl_bvp.h is confirmed missing, remove -DHAVE_GSL_BVP_H from CFLAGS.
-CFLAGS += -DHAVE_GSL_BVP_H
-LDFLAGS = -lm -lgsl -lgslcblas
+CFLAGS = -Wall -Wextra -O2 -g -std=c99 -Isrc-local $(shell pkg-config --cflags gsl)
+LDFLAGS = $(shell pkg-config --libs gsl)
 
-# Source Files and Output Names
-SRC_DIR = src-local
+# Check if GSL BVP is available
+GSL_BVP_CHECK := $(shell echo '#include <gsl/gsl_bvp.h>' | $(CC) -E -x c - >/dev/null 2>&1 && echo "yes" || echo "no")
+
+ifeq ($(GSL_BVP_CHECK),yes)
+    CFLAGS += -DHAVE_GSL_BVP_H
+    $(info GSL BVP support detected)
+else
+    $(warning GSL BVP support not detected - solver will use fallback implementation)
+endif
+
+# Source files
+SRC_DIR = .
 TEST_DIR = test
-MAIN_SRC = $(SRC_DIR)/GLE_solver-GSL.c
-MAIN_EXEC = gle_solver_gsl
-TEST_SRC = $(TEST_DIR)/test_GLE_solver-GSL.c
-TEST_EXEC = run_c_tests
+BUILD_DIR = build
 
-# Object file for the library part of GLE_solver-GSL.c (without its main)
-LIB_OBJ = $(SRC_DIR)/GLE_solver-GSL_lib.o
+# Targets
+SOLVER = gle_solver_gsl
+TEST_EXEC = test_gle_solver_gsl
 
-# Default target
-all: $(MAIN_EXEC)
+# Object files
+SOLVER_OBJ = $(BUILD_DIR)/GLE_solver-GSL.o
+TEST_OBJ = $(BUILD_DIR)/test_GLE_solver-GSL.o
 
-# Rule to build the main executable
-$(MAIN_EXEC): $(MAIN_SRC) $(SRC_DIR)/GLE_solver-GSL.h
-	$(CC) $(CFLAGS) $(MAIN_SRC) -o $(MAIN_EXEC) $(LDFLAGS)
+.PHONY: all clean test run
 
-# Rule to build the library object file (GLE_solver-GSL.c without its main)
-# We define COMPILING_TESTS to exclude main from GLE_solver-GSL.c
-$(LIB_OBJ): $(MAIN_SRC) $(SRC_DIR)/GLE_solver-GSL.h
-	$(CC) $(CFLAGS) -DCOMPILING_TESTS -c $(MAIN_SRC) -o $(LIB_OBJ)
+all: $(BUILD_DIR) $(SOLVER)
 
-# Rule to build the test executable
-$(TEST_EXEC): $(TEST_SRC) $(LIB_OBJ) $(SRC_DIR)/GLE_solver-GSL.h
-	$(CC) $(CFLAGS) $(TEST_SRC) $(LIB_OBJ) -o $(TEST_EXEC) $(LDFLAGS)
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
-# Rule to run C tests
-test_c: $(TEST_EXEC)
-	@echo "Running C unit tests..."
+# Build the solver executable
+$(SOLVER): $(SOLVER_OBJ)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+# Build the solver object file
+$(BUILD_DIR)/GLE_solver-GSL.o: $(SRC_DIR)/GLE_solver-GSL.c $(SRC_DIR)/src-local/GLE_solver-GSL.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Build the test executable
+$(TEST_EXEC): $(TEST_OBJ) $(BUILD_DIR)/GLE_solver-GSL-test.o
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+# Build test object file
+$(BUILD_DIR)/test_GLE_solver-GSL.o: $(TEST_DIR)/test_GLE_solver-GSL.c $(SRC_DIR)/src-local/GLE_solver-GSL.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Build solver object for tests (with COMPILING_TESTS defined)
+$(BUILD_DIR)/GLE_solver-GSL-test.o: $(SRC_DIR)/GLE_solver-GSL.c $(SRC_DIR)/src-local/GLE_solver-GSL.h
+	$(CC) $(CFLAGS) -DCOMPILING_TESTS -c $< -o $@
+
+test: $(TEST_EXEC)
 	./$(TEST_EXEC)
 
-# Clean rule
-clean:
-	@echo "Cleaning up compiled files..."
-	rm -f $(MAIN_EXEC) $(TEST_EXEC) $(LIB_OBJ)
-	rm -f output_h.csv output_theta.csv
+run: $(SOLVER)
+	mkdir -p output
+	./$(SOLVER)
 
-.PHONY: all test_c clean
+compare: run
+	@echo "Comparing C and Python outputs..."
+	@echo "Running Python solver..."
+	python GLE_solver.py
+	@echo "Outputs saved in output/ directory"
+
+clean:
+	rm -rf $(BUILD_DIR) $(SOLVER) $(TEST_EXEC)
+	rm -f output/GLE_*_c.csv
+
+help:
+	@echo "Available targets:"
+	@echo "  make all      - Build the solver"
+	@echo "  make test     - Build and run tests"
+	@echo "  make run      - Run the solver"
+	@echo "  make compare  - Run both C and Python solvers"
+	@echo "  make clean    - Clean build artifacts"
+	@echo "  make help     - Show this help message"

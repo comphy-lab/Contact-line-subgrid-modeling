@@ -3,8 +3,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions
+# C extensions and build artifacts
 *.so
+*.o
+*.a
+*.dSYM/
+*.dylib
+*.dll
+*.exe
+
+# Compiled executables (no extension on Unix)
+gle_solver_gsl
+test_gle_solver_gsl
+GLE_solver_run
+test_gle_solver
+a.out
 
 # Distribution / packaging
 .Python
