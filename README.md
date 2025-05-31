@@ -26,67 +26,132 @@ sh test/run_tests.sh
 
 ## C Implementation (`GLE_solver-GSL`)
 
-A C implementation of the GLE solver using the GNU Scientific Library (GSL) is provided in the `src-local/` directory.
+A C implementation of the GLE solver using the GNU Scientific Library (GSL) is provided. The solver uses an enhanced shooting method with gradient descent optimization for robust convergence.
 
 ### Dependencies (C)
 - A C compiler (e.g., GCC)
-- GNU Scientific Library (GSL)
+- GNU Scientific Library (GSL) version 2.5 or later
+- OpenBLAS (or another BLAS implementation)
 
-To install GSL on Debian/Ubuntu-based systems:
+#### Installing GSL on macOS with Anaconda:
+```bash
+conda install -c conda-forge gsl
+```
+
+#### Installing GSL on Debian/Ubuntu:
 ```bash
 sudo apt-get update
 sudo apt-get install libgsl-dev
 ```
-For other systems, please refer to the GSL installation documentation.
 
-### Compilation (C)
+#### Installing GSL on Fedora/RHEL:
+```bash
+sudo dnf install gsl-devel
+```
 
-A `Makefile` is provided to manage the compilation process.
+### Building the C Solver
 
-- **To build the main C solver executable (`gle_solver_gsl`):**
-  ```bash
-  make
-  ```
-  or
-  ```bash
-  make all
-  ```
-  This compiles `src-local/GLE_solver-GSL.c`. The `Makefile` includes the `-DHAVE_GSL_BVP_H` flag by default, which enables the BVP solving capabilities. If your GSL installation is missing `gsl/gsl_bvp.h` (as observed in some limited environments), you may need to remove this flag from the `CFLAGS` in the `Makefile`, which will disable BVP-specific code paths and data output.
+The provided `Makefile` handles compilation with proper library paths and runtime linking:
 
-- **To build the C unit test executable (`run_c_tests`):**
-  The test executable is built as part of the `make test_c` command or can be built standalone if needed (though typically not directly).
+```bash
+# Build the solver
+make
+
+# Or explicitly
+make all
+```
+
+This creates the `gle_solver_gsl` executable.
 
 ### Running the C Solver
 
-After compilation, the main solver executable can be run from the root directory:
 ```bash
+# Run with default parameters (verbose output)
 ./gle_solver_gsl
+
+# Run in quiet mode (minimal output)
+./gle_solver_gsl --quiet
 ```
-If the BVP solver converges successfully (and was compiled with `HAVE_GSL_BVP_H`), it will produce two CSV files in the root directory:
-- `output_h.csv`: Contains `s` (dimensionless arc length) and `h` (film height) data.
-- `output_theta.csv`: Contains `s` and `theta` (contact angle) data.
 
-If BVP functionalities were disabled during compilation, the program will indicate this and will not produce output files.
+The solver uses the following default parameters:
+- Capillary number (Ca): 1.00
+- Slip length (λ): 1.00e-05
+- Viscosity ratio (μ_r): 1.00e-03
+- Initial contact angle (θ₀): 30 degrees
+- Domain: s ∈ [0, 4.00e-04]
 
-### Running C Unit Tests
+### Output Files
 
-To compile and run the C unit tests:
+The solver generates a CSV file in the `output/` directory:
+- `output/data-c-gsl.csv`: Contains columns for s (arc length), h (film height), and theta (contact angle)
+
+Additionally, two separate files are created for compatibility:
+- `output/GLE_h_profile_c.csv`: Contains s and h data
+- `output/GLE_theta_profile_c.csv`: Contains s and theta_deg (angle in degrees)
+
+### Solver Algorithm
+
+The C implementation uses an enhanced shooting method that:
+1. First attempts traditional bracketing to find the initial value ω₀
+2. If bracketing fails, automatically switches to gradient descent optimization
+3. Uses adaptive learning rates and line search for robust convergence
+4. Achieves convergence tolerance of 1e-8 for the boundary condition residual
+
+### Comparing C and Python Results
+
+To run both solvers and compare outputs:
 ```bash
-make test_c
+make compare
 ```
-This command will:
-1. Compile `src-local/GLE_solver-GSL.c` as a library object (excluding its `main` function).
-2. Compile `test/test_GLE_solver-GSL.c` and link it against the library object and GSL.
-3. Run the compiled test executable (`./run_c_tests`).
 
-The C tests will also be run if you execute the main test script:
+This will:
+1. Run the C solver
+2. Run the Python solver
+3. Place outputs in the `output/` directory for comparison
+
+### Running Tests
+
 ```bash
+# Run C tests only
+make test
+
+# Run all tests (Python and C)
 sh test/run_tests.sh
 ```
 
-### Cleaning Compiled Files
+### Troubleshooting
 
-To remove all compiled C executables, object files, and output CSVs:
+If you encounter library loading errors on macOS:
+```
+dyld: Library not loaded: @rpath/libgsl.25.dylib
+```
+
+The Makefile already includes runtime path fixes, but if issues persist:
+1. Ensure GSL is installed via conda or homebrew
+2. Check that the library paths in the Makefile match your installation
+3. Consider creating symbolic links for missing libraries (e.g., libcblas.3.dylib)
+
+### Cleaning Build Artifacts
+
 ```bash
 make clean
 ```
+
+This removes:
+- Compiled executables
+- Object files in `build/`
+- Output CSV files
+
+### Available Make Targets
+
+```bash
+make help
+```
+
+Shows all available targets:
+- `make all` - Build the solver
+- `make test` - Build and run tests
+- `make run` - Run the solver
+- `make compare` - Run both C and Python solvers
+- `make clean` - Clean build artifacts
+- `make help` - Show help message

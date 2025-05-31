@@ -4,7 +4,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -g -std=c99 -Isrc-local -I/Users/vatsal/anaconda3/include
-LDFLAGS = -L/Users/vatsal/anaconda3/lib -lgsl -lgslcblas -lm
+LDFLAGS = -L/Users/vatsal/anaconda3/lib -Wl,-rpath,/Users/vatsal/anaconda3/lib -lgsl -lgslcblas -lopenblas -lm
 
 # Check if GSL BVP is available
 GSL_BVP_CHECK := $(shell echo "\#include <gsl/gsl_bvp.h>" | $(CC) -E -x c - >/dev/null 2>&1 && echo "yes" || echo "no")
@@ -64,14 +64,14 @@ run: $(SOLVER)
 	./$(SOLVER)
 
 compare: run
-	@echo "Comparing C and Python outputs..."
 	@echo "Running Python solver..."
 	python GLE_solver.py
-	@echo "Outputs saved in output/ directory"
+	@echo "Running comparison between C and Python solvers..."
+	python3 compare_results.py
 
 clean:
 	rm -rf $(BUILD_DIR) $(SOLVER) $(TEST_EXEC)
-	rm -f output/data-c-gls.csv
+	rm -f output/data-c-gsl.csv output/GLE_h_profile_c.csv output/GLE_theta_profile_c.csv
 
 help:
 	@echo "Available targets:"

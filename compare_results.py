@@ -16,39 +16,33 @@ import sys
 
 def load_python_results():
     """Load results from Python solver output files"""
-    # Python solver doesn't save to CSV, so we need to run it and capture results
-    from GLE_solver import run_solver_and_plot
-
-    print("Running Python solver...")
-    solution, s_values, h_values, theta_values, w_values = run_solver_and_plot(GUI=False)
-
-    # Convert to DataFrame for easier comparison
-    df_python = pd.DataFrame({
-        's': s_values,
-        'h': h_values,
-        'theta_rad': theta_values,
-        'theta_deg': theta_values * 180 / np.pi,
-        'omega': w_values
-    })
-
-    return df_python, solution.success
+    data_file = 'output/data-python.csv'
+    
+    if not os.path.exists(data_file):
+        print("Python solver output file not found. Please run the Python solver first.")
+        return None, False
+    
+    # Load data
+    df_python = pd.read_csv(data_file)
+    # Add theta_deg column for compatibility
+    df_python['theta_deg'] = df_python['theta'] * 180 / np.pi
+    df_python['theta_rad'] = df_python['theta']  # theta is already in radians
+    
+    return df_python, True
 
 def load_c_results():
     """Load results from C solver output files"""
-    h_file = 'output/GLE_h_profile_c.csv'
-    theta_file = 'output/GLE_theta_profile_c.csv'
+    data_file = 'output/data-c-gsl.csv'
 
-    if not os.path.exists(h_file) or not os.path.exists(theta_file):
-        print("C solver output files not found. Please run the C solver first.")
+    if not os.path.exists(data_file):
+        print("C solver output file not found. Please run the C solver first.")
         return None, False
 
-    # Load h data
-    df_h = pd.read_csv(h_file)
-    df_theta = pd.read_csv(theta_file)
-
-    # Merge on s values
-    df_c = pd.merge(df_h, df_theta, on='s')
-    df_c['theta_rad'] = df_c['theta_deg'] * np.pi / 180
+    # Load consolidated data
+    df_c = pd.read_csv(data_file)
+    # Add theta_deg column for compatibility
+    df_c['theta_deg'] = df_c['theta'] * 180 / np.pi
+    df_c['theta_rad'] = df_c['theta']  # theta is already in radians
 
     return df_c, True
 
@@ -95,45 +89,67 @@ def compare_solutions(df_python, df_c):
 
 def plot_comparison(df_python, df_c):
     """Create comparison plots"""
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    # Set up the figure with nice styling
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    
+    # Define colors
+    python_color = '#1f77b4'  # Blue
+    c_color = '#ff7f0e'       # Orange
 
     # Plot h(s)
-    ax1.plot(df_python['s'], df_python['h'], 'b-', label='Python', linewidth=2)
-    ax1.plot(df_c['s'], df_c['h'], 'r--', label='C', linewidth=2, alpha=0.7)
-    ax1.set_xlabel('s')
-    ax1.set_ylabel('h(s)')
-    ax1.set_title('Film Thickness Profile Comparison')
-    ax1.legend()
+    ax1.plot(df_python['s'] * 1e6, df_python['h'] * 1e6, '-', 
+             color=python_color, label='Python (solve_bvp)', linewidth=2.5)
+    ax1.plot(df_c['s'] * 1e6, df_c['h'] * 1e6, '--', 
+             color=c_color, label='C (GSL shooting method)', linewidth=2.5)
+    ax1.set_xlabel('s [μm]', fontsize=12)
+    ax1.set_ylabel('h(s) [μm]', fontsize=12)
+    ax1.set_title('Film Thickness Profile Comparison', fontsize=14, fontweight='bold')
+    ax1.legend(loc='best', fontsize=11, frameon=True, shadow=True)
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim(0, 4e-4)
+    ax1.set_xlim(0, 4e-4 * 1e6)
+    
+    # Add text box with parameters
+    textstr = f'Ca = 1.0\nλ_slip = 1e-5\nμ_r = 1e-3'
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+    ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
+             verticalalignment='top', bbox=props)
 
     # Plot theta(s)
-    ax2.plot(df_python['s'], df_python['theta_deg'], 'b-', label='Python', linewidth=2)
-    ax2.plot(df_c['s'], df_c['theta_deg'], 'r--', label='C', linewidth=2, alpha=0.7)
-    ax2.set_xlabel('s')
-    ax2.set_ylabel('θ(s) [degrees]')
-    ax2.set_title('Contact Angle Profile Comparison')
-    ax2.legend()
+    ax2.plot(df_python['s'] * 1e6, df_python['theta_deg'], '-', 
+             color=python_color, label='Python (solve_bvp)', linewidth=2.5)
+    ax2.plot(df_c['s'] * 1e6, df_c['theta_deg'], '--', 
+             color=c_color, label='C (GSL shooting method)', linewidth=2.5)
+    ax2.set_xlabel('s [μm]', fontsize=12)
+    ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
+    ax2.set_title('Contact Angle Profile Comparison', fontsize=14, fontweight='bold')
+    ax2.legend(loc='best', fontsize=11, frameon=True, shadow=True)
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(0, 4e-4)
+    ax2.set_xlim(0, 4e-4 * 1e6)
+    
+    # Add initial condition text
+    ax2.text(0.02, 0.05, f'θ(0) = 30°', transform=ax2.transAxes, fontsize=10,
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
 
     plt.tight_layout()
-    plt.savefig('output/comparison_python_vs_c.png', dpi=150, bbox_inches='tight')
+    plt.savefig('output/comparison_python_vs_c.png', dpi=300, bbox_inches='tight')
     print("\nComparison plot saved to: output/comparison_python_vs_c.png")
 
 def main():
     print("=== GLE Solver Output Comparison ===\n")
 
     # Load Python results
-    df_python, python_success = load_python_results()
-    if not python_success:
-        print("WARNING: Python solver did not converge successfully!")
+    df_python, python_exists = load_python_results()
+    if not python_exists:
+        print("\nPlease run the Python solver first:")
+        print("  python GLE_solver.py")
+        return 1
 
     # Load C results
     df_c, c_exists = load_c_results()
     if not c_exists:
         print("\nPlease run the C solver first:")
-        print("  make -f Makefile.corrected run")
+        print("  make run")
         return 1
 
     # Compare solutions

@@ -50,8 +50,7 @@ void boundary_conditions(const gsl_vector *y_a, const gsl_vector *y_b,
 #endif
 
 // Main solver function
-int solve_gle_bvp_and_save(size_t num_nodes, const char *h_output_path, 
-                          const char *theta_output_path, int verbose);
+int solve_gle_bvp_and_save(size_t num_nodes, int verbose);
 
 // ODE system for shooting method (matching Python)
 int gle_ode_system_python(double s, const double y[], double dyds[], void *params);
@@ -66,5 +65,8 @@ double shooting_residual_function(double omega0, void *params);
 
 // Helper function to integrate ODE
 int integrate_ode(double omega0, shooting_context *ctx, double *h_final, double *theta_final, double *omega_final);
+
+// Gradient descent optimization for omega0
+double gradient_descent_omega0(shooting_context *ctx, double omega0_init);
 
 #endif // GLE_SOLVER_GSL_H
