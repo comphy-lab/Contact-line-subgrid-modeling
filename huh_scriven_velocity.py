@@ -61,9 +61,7 @@ def compute_and_plot(GUI=False, output_dir='plots'):
     Theta_grid = np.array(Theta_grid)
     Phi_grid = np.array(Phi_grid)
 
-    # Compute Ur, Uphi, Ux, Uy
-    Ur_grid = Ur(Theta_grid, Phi_grid)
-    Uphi_grid = Uphi(Theta_grid, Phi_grid)
+    # Compute Ux, Uy
     Ux_grid = Ux(Theta_grid, Phi_grid)
     Uy_grid = Uy(Theta_grid, Phi_grid)
 

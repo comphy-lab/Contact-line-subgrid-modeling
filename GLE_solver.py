@@ -79,23 +79,23 @@ def run_solver_and_plot(GUI=False, output_dir='plots'):
         os.makedirs(output_dir, exist_ok=True)
     
     # Initial guess for the solution
-    s_range = np.linspace(0, 4*Delta, 10000)  # Define the range of s
-    y_guess = np.zeros((3, s_range.size))  # Initial guess for [theta, w, h]
-    y_guess[0, :] = np.linspace(lambda_slip, Delta, s_range.size)  # Linear guess for h
-    y_guess[1, :] = np.pi / 6  # Initial guess for theta
-    y_guess[2, :] = 0          # Initial guess for dTheta/ds
+    s_range_local = np.linspace(0, 4*Delta, 10000)  # Define the range of s
+    y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
+    y_guess_local[0, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
+    y_guess_local[1, :] = np.pi / 6  # Initial guess for theta
+    y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
     # Solve the ODEs
-    solution = solve_bvp(GLE, boundary_conditions, s_range, y_guess)
+    solution = solve_bvp(GLE, boundary_conditions, s_range_local, y_guess_local)
 
     # Extract the solution
-    s_values = solution.x
-    h_values, theta_values, w_values = solution.y
-    theta_values_deg = theta_values*180/np.pi
+    s_values_local = solution.x
+    h_values_local, theta_values_local, w_values_local = solution.y
+    theta_values_deg = theta_values_local*180/np.pi
 
     # Plot the results
     plt.figure(figsize=(10, 5))
-    plt.plot(s_values, h_values, label=r'$h(s)$')
+    plt.plot(s_values_local, h_values_local, label=r'$h(s)$')
     plt.ylabel(r'$h(s)$')
     plt.xlabel('s')
     plt.grid()
@@ -106,7 +106,7 @@ def run_solver_and_plot(GUI=False, output_dir='plots'):
         plt.close()
 
     plt.figure(figsize=(10, 5))
-    plt.plot(s_values, theta_values_deg, label=r'$\theta(s)$')
+    plt.plot(s_values_local, theta_values_deg, label=r'$\theta(s)$')
     plt.xlabel('s')
     plt.ylabel(r'$\theta(s)$ (degrees)')
     plt.grid()
@@ -116,7 +116,7 @@ def run_solver_and_plot(GUI=False, output_dir='plots'):
         plt.savefig(os.path.join(output_dir, 'GLE_theta_profile.png'), dpi=150, bbox_inches='tight')
         plt.close()
     
-    return solution, s_values, h_values, theta_values, w_values
+    return solution, s_values_local, h_values_local, theta_values_local, w_values_local
 
 # Main execution
 if __name__ == "__main__":
