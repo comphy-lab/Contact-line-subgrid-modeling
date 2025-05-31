@@ -125,10 +125,11 @@ if __name__ == "__main__":
     
     solution, s_values_final, h_values_final, theta_values_final, w_values_final = run_solver_and_plot(GUI=gui_mode)
     
+    print(f"Solution converged: {solution.success}")
+    print(f"Number of iterations: {solution.niter}")
+    
     if not gui_mode:
         print("Plots saved in 'output' directory")
-        print(f"Solution converged: {solution.success}")
-        print(f"Number of iterations: {solution.niter}")
 
 
 # Note: difference between this code and the ones from our [coalleauges](https://doi.org/10.1140/epjs/s11734-024-01443-5) is that we are solving for a specific control parameter whereas they use continuation method to track solution branches as parameters vary.
