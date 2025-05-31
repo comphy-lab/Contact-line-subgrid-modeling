@@ -26,8 +26,10 @@ PYTEST_EXIT_CODE=$?
 echo ""
 echo "Running C unit tests via Makefile..."
 echo "=================================="
-make test_c
+cd ..
+make test
 MAKE_EXIT_CODE=$?
+cd test
 
 # Return non-zero if either pytest or make failed
 if [ $PYTEST_EXIT_CODE -ne 0 ] || [ $MAKE_EXIT_CODE -ne 0 ]; then

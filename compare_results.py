@@ -105,7 +105,7 @@ def plot_comparison(df_python, df_c):
     ax1.set_xlabel('s [μm]', fontsize=12)
     ax1.set_ylabel('h(s) [μm]', fontsize=12)
     ax1.set_title('Film Thickness Profile Comparison', fontsize=14, fontweight='bold')
-    ax1.legend(loc='best', fontsize=11, frameon=True, shadow=True)
+    ax1.legend(loc='lower right', fontsize=11, frameon=True, shadow=True)
     ax1.grid(True, alpha=0.3)
     ax1.set_xlim(0, 4e-4 * 1e6)
     
