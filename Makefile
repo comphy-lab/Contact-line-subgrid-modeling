@@ -7,7 +7,7 @@ CFLAGS = -Wall -Wextra -O2 -g -std=c99 -Isrc-local $(shell pkg-config --cflags g
 LDFLAGS = $(shell pkg-config --libs gsl)
 
 # Check if GSL BVP is available
-GSL_BVP_CHECK := $(shell echo '#include <gsl/gsl_bvp.h>' | $(CC) -E -x c - >/dev/null 2>&1 && echo "yes" || echo "no")
+GSL_BVP_CHECK := $(shell echo "\#include <gsl/gsl_bvp.h>" | $(CC) -E -x c - >/dev/null 2>&1 && echo "yes" || echo "no")
 
 ifeq ($(GSL_BVP_CHECK),yes)
     CFLAGS += -DHAVE_GSL_BVP_H
