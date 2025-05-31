@@ -92,27 +92,47 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     h_values_local, theta_values_local, w_values_local = solution.y
     theta_values_deg = theta_values_local*180/np.pi
 
-    # Plot the results
-    plt.figure(figsize=(10, 5))
-    plt.plot(s_values_local, h_values_local, label=r'$h(s)$')
-    plt.ylabel(r'$h(s)$')
-    plt.xlabel('s')
-    plt.grid()
+    # Plot the results with nice styling
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    
+    # Define color
+    solver_color = '#1f77b4'  # Blue
+    
+    # Plot h(s)
+    ax1.plot(s_values_local * 1e6, h_values_local * 1e6, '-', 
+             color=solver_color, linewidth=2.5)
+    ax1.set_xlabel('s [μm]', fontsize=12)
+    ax1.set_ylabel('h(s) [μm]', fontsize=12)
+    ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
+    ax1.grid(True, alpha=0.3)
+    ax1.set_xlim(0, 4*Delta * 1e6)
+    
+    # Add text box with parameters
+    textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+    ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
+             verticalalignment='top', bbox=props)
+    
+    # Plot theta(s)
+    ax2.plot(s_values_local * 1e6, theta_values_deg, '-', 
+             color=solver_color, linewidth=2.5)
+    ax2.set_xlabel('s [μm]', fontsize=12)
+    ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
+    ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+    ax2.set_xlim(0, 4*Delta * 1e6)
+    
+    # Add initial condition text
+    ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+    
+    plt.tight_layout()
+    
     if GUI:
         plt.show()
     else:
-        plt.savefig(os.path.join(output_dir, 'GLE_h_profile.png'), dpi=150, bbox_inches='tight')
-        plt.close()
-
-    plt.figure(figsize=(10, 5))
-    plt.plot(s_values_local, theta_values_deg, label=r'$\theta(s)$')
-    plt.xlabel('s')
-    plt.ylabel(r'$\theta(s)$ (degrees)')
-    plt.grid()
-    if GUI:
-        plt.show()
-    else:
-        plt.savefig(os.path.join(output_dir, 'GLE_theta_profile.png'), dpi=150, bbox_inches='tight')
+        plt.savefig(os.path.join(output_dir, 'GLE_profiles.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
     # Save data to CSV file
@@ -136,7 +156,7 @@ if __name__ == "__main__":
     print(f"Number of iterations: {solution.niter}")
 
     if not gui_mode:
-        print("Plots saved in 'output' directory")
+        print("Plot saved to: output/GLE_profiles.png")
 
 
 # Note: difference between this code and the ones from our [coalleauges](https://doi.org/10.1140/epjs/s11734-024-01443-5) is that we are solving for a specific control parameter whereas they use continuation method to track solution branches as parameters vary.
