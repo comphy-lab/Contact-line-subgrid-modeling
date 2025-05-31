@@ -127,7 +127,6 @@ class TestParameterRanges:
     def test_extreme_capillary_number(self):
         """Test with very small and large Ca"""
         theta = np.pi/4
-        mu_r = 0.1
         
         # The function should handle extreme values
         result_small = f(theta, 1e-10)

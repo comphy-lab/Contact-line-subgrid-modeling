@@ -126,7 +126,7 @@ if __name__ == "__main__":
     solution, s_values_final, h_values_final, theta_values_final, w_values_final = run_solver_and_plot(GUI=gui_mode)
     
     if not gui_mode:
-        print(f"Plots saved in 'output' directory")
+        print("Plots saved in 'output' directory")
         print(f"Solution converged: {solution.success}")
         print(f"Number of iterations: {solution.niter}")
 

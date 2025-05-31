@@ -113,6 +113,6 @@ if __name__ == "__main__":
     Theta_grid, Phi_grid, Ux_rel_grid, Uy_rel_grid = compute_and_plot(GUI=gui_mode)
     
     if not gui_mode:
-        print(f"Plots saved in 'output' directory")
+        print("Plots saved in 'output' directory")
         print(f"Ux_rel range: [{np.min(Ux_rel_grid):.4f}, {np.max(Ux_rel_grid):.4f}]")
         print(f"Uy_rel range: [{np.min(Uy_rel_grid):.4f}, {np.max(Uy_rel_grid):.4f}]")
