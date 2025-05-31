@@ -33,6 +33,7 @@ void test_gle_params_init() {
     assert(approx_equal(params.theta0, THETA0_DEFAULT, TOLERANCE));
     assert(approx_equal(params.Delta, DELTA_DEFAULT, TOLERANCE));
     assert(approx_equal(params.w, 0.0, TOLERANCE));
+    assert(params.sunctx == NULL);
     
     printf("✓ test_gle_params_init passed\n");
 }
@@ -59,10 +60,11 @@ void test_gle_solution_alloc_free() {
 void test_gle_ode_system() {
     GLEParams params;
     gle_params_init(&params);
+    gle_create_context(&params);
     
     /* Create test vectors */
-    N_Vector y = N_VNew_Serial(3);
-    N_Vector ydot = N_VNew_Serial(3);
+    N_Vector y = N_VNew_Serial(3, params.sunctx);
+    N_Vector ydot = N_VNew_Serial(3, params.sunctx);
     
     /* Set test state: h=1e-5, theta=pi/6, omega=0.1 */
     NV_Ith_S(y, 0) = 1e-5;
@@ -87,6 +89,7 @@ void test_gle_ode_system() {
     
     N_VDestroy_Serial(y);
     N_VDestroy_Serial(ydot);
+    gle_destroy_context(&params);
     
     printf("✓ test_gle_ode_system passed\n");
 }
@@ -95,9 +98,10 @@ void test_gle_ode_system() {
 void test_gle_ode_system_invalid_state() {
     GLEParams params;
     gle_params_init(&params);
+    gle_create_context(&params);
     
-    N_Vector y = N_VNew_Serial(3);
-    N_Vector ydot = N_VNew_Serial(3);
+    N_Vector y = N_VNew_Serial(3, params.sunctx);
+    N_Vector ydot = N_VNew_Serial(3, params.sunctx);
     
     /* Test with negative h */
     NV_Ith_S(y, 0) = -1e-5;
@@ -117,6 +121,7 @@ void test_gle_ode_system_invalid_state() {
     
     N_VDestroy_Serial(y);
     N_VDestroy_Serial(ydot);
+    gle_destroy_context(&params);
     
     printf("✓ test_gle_ode_system_invalid_state passed\n");
 }
@@ -125,14 +130,17 @@ void test_gle_ode_system_invalid_state() {
 void test_gle_cvode_init() {
     GLEParams params;
     gle_params_init(&params);
+    gle_create_context(&params);
     
     void *cvode_mem = gle_cvode_init(&params);
     
     /* Note: This test may fail if SUNDIALS is not installed */
     if (cvode_mem != NULL) {
         gle_cvode_cleanup(cvode_mem);
+        gle_destroy_context(&params);
         printf("✓ test_gle_cvode_init passed\n");
     } else {
+        gle_destroy_context(&params);
         printf("⚠ test_gle_cvode_init skipped (SUNDIALS not available)\n");
     }
 }
@@ -141,6 +149,7 @@ void test_gle_cvode_init() {
 void test_gle_solve_bvp() {
     GLEParams params;
     gle_params_init(&params);
+    gle_create_context(&params);
     
     int n_points = 50;
     GLESolution *solution = gle_solution_alloc(n_points);
@@ -170,6 +179,7 @@ void test_gle_solve_bvp() {
     }
     
     gle_solution_free(solution);
+    gle_destroy_context(&params);
 }
 
 /* Test CSV output functionality */

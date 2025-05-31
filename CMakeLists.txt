@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Find required packages
 find_package(PkgConfig REQUIRED)
+find_package(MPI)
 
 # Find SUNDIALS
 find_path(SUNDIALS_INCLUDE_DIR 
@@ -16,21 +17,36 @@ find_path(SUNDIALS_INCLUDE_DIR
 
 find_library(SUNDIALS_CVODE_LIB
     NAMES sundials_cvode
-    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /opt/homebrew/lib
 )
 
 find_library(SUNDIALS_KINSOL_LIB
     NAMES sundials_kinsol
-    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /opt/homebrew/lib
 )
 
 find_library(SUNDIALS_NVECSERIAL_LIB
     NAMES sundials_nvecserial
-    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /opt/homebrew/lib
+)
+
+find_library(SUNDIALS_CORE_LIB
+    NAMES sundials_core
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /opt/homebrew/lib
+)
+
+find_library(SUNDIALS_SUNLINSOLDENSE_LIB
+    NAMES sundials_sunlinsoldense
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /opt/homebrew/lib
+)
+
+find_library(SUNDIALS_SUNMATRIXDENSE_LIB
+    NAMES sundials_sunmatrixdense
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /opt/homebrew/lib
 )
 
 # Check if SUNDIALS was found
-if(NOT SUNDIALS_INCLUDE_DIR OR NOT SUNDIALS_CVODE_LIB OR NOT SUNDIALS_KINSOL_LIB OR NOT SUNDIALS_NVECSERIAL_LIB)
+if(NOT SUNDIALS_INCLUDE_DIR OR NOT SUNDIALS_CVODE_LIB OR NOT SUNDIALS_KINSOL_LIB OR NOT SUNDIALS_NVECSERIAL_LIB OR NOT SUNDIALS_CORE_LIB)
     message(WARNING "SUNDIALS not found. Please install SUNDIALS library (>= 6.0) with CVODE and KINSOL modules.")
     message(STATUS "On Ubuntu/Debian: sudo apt-get install libsundials-dev")
     message(STATUS "On CentOS/RHEL: sudo yum install sundials-devel")
@@ -61,15 +77,25 @@ add_library(gle_math STATIC ${GLE_MATH_SOURCES})
 target_link_libraries(gle_math ${MATH_LIB})
 
 # Create main solver library
-if(SUNDIALS_CVODE_LIB AND SUNDIALS_KINSOL_LIB AND SUNDIALS_NVECSERIAL_LIB)
+if(SUNDIALS_CVODE_LIB AND SUNDIALS_KINSOL_LIB AND SUNDIALS_NVECSERIAL_LIB AND SUNDIALS_CORE_LIB)
     add_library(gle_solver STATIC ${GLE_SOLVER_SOURCES})
     target_link_libraries(gle_solver 
         gle_math
         ${SUNDIALS_CVODE_LIB}
         ${SUNDIALS_KINSOL_LIB}
         ${SUNDIALS_NVECSERIAL_LIB}
+        ${SUNDIALS_SUNLINSOLDENSE_LIB}
+        ${SUNDIALS_SUNMATRIXDENSE_LIB}
+        ${SUNDIALS_CORE_LIB}
         ${MATH_LIB}
     )
+    
+    # Link MPI if available and SUNDIALS was built with MPI
+    if(MPI_FOUND)
+        target_link_libraries(gle_solver ${MPI_C_LIBRARIES})
+        target_include_directories(gle_solver PRIVATE ${MPI_C_INCLUDE_DIRS})
+        target_compile_definitions(gle_solver PRIVATE SUNDIALS_MPI_ENABLED=1)
+    endif()
 
     # Create main executable
     add_executable(gle_solver_main src/main.c)
@@ -107,5 +133,8 @@ message(STATUS "SUNDIALS Include Dir: ${SUNDIALS_INCLUDE_DIR}")
 message(STATUS "SUNDIALS CVODE Lib: ${SUNDIALS_CVODE_LIB}")
 message(STATUS "SUNDIALS KINSOL Lib: ${SUNDIALS_KINSOL_LIB}")
 message(STATUS "SUNDIALS NVECSERIAL Lib: ${SUNDIALS_NVECSERIAL_LIB}")
+message(STATUS "SUNDIALS CORE Lib: ${SUNDIALS_CORE_LIB}")
+message(STATUS "SUNDIALS SUNLINSOLDENSE Lib: ${SUNDIALS_SUNLINSOLDENSE_LIB}")
+message(STATUS "SUNDIALS SUNMATRIXDENSE Lib: ${SUNDIALS_SUNMATRIXDENSE_LIB}")
 message(STATUS "Math Library: ${MATH_LIB}")
 message(STATUS "==========================================")

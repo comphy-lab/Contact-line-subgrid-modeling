@@ -105,10 +105,17 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
+    /* Create SUNDIALS context */
+    if (gle_create_context(&params) != 0) {
+        printf("Error: Failed to create SUNDIALS context\n");
+        return 1;
+    }
+    
     /* Allocate solution structure */
     GLESolution *solution = gle_solution_alloc(n_points);
     if (!solution) {
         printf("Error: Failed to allocate solution structure\n");
+        gle_destroy_context(&params);
         return 1;
     }
     
@@ -124,31 +131,38 @@ int main(int argc, char *argv[]) {
         printf("Proceeding with available solution data...\n");
     }
     
-    /* Save results to CSV files */
-    printf("\nSaving results to CSV files...\n");
+    /* Save results to CSV file */
+    printf("\nSaving results to CSV file...\n");
     
     char filename[512];
     
-    /* Save film thickness profile */
-    snprintf(filename, sizeof(filename), "%s/gle_h_profile.csv", output_dir);
-    if (save_h_profile_csv(filename, solution) != 0) {
-        printf("Error: Failed to save h profile\n");
+    /* Save data as requested: s, h, theta */
+    snprintf(filename, sizeof(filename), "%s/data-c-sundials.csv", output_dir);
+    FILE *file = fopen(filename, "w");
+    if (!file) {
+        printf("Error: Cannot open file '%s' for writing\n", filename);
+        gle_solution_free(solution);
+        gle_destroy_context(&params);
+        return 1;
     }
     
-    /* Save contact angle profile */
-    snprintf(filename, sizeof(filename), "%s/gle_theta_profile.csv", output_dir);
-    if (save_theta_profile_csv(filename, solution) != 0) {
-        printf("Error: Failed to save theta profile\n");
+    /* Write CSV header */
+    fprintf(file, "s,h,theta\n");
+    
+    /* Write data rows (theta in radians) */
+    for (int i = 0; i < solution->n_points; i++) {
+        fprintf(file, "%.12e,%.12e,%.12e\n", 
+                solution->s_values[i], 
+                solution->h_values[i],
+                solution->theta_values[i]);
     }
     
-    /* Save complete solution */
-    snprintf(filename, sizeof(filename), "%s/gle_complete_solution.csv", output_dir);
-    if (save_complete_solution_csv(filename, solution) != 0) {
-        printf("Error: Failed to save complete solution\n");
-    }
+    fclose(file);
+    printf("Data saved to: %s\n", filename);
     
     /* Clean up */
     gle_solution_free(solution);
+    gle_destroy_context(&params);
     
     printf("\n=== GLE Solver completed ===\n");
     

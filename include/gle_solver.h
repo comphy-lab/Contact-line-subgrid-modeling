@@ -2,11 +2,12 @@
 #define GLE_SOLVER_H
 
 #include <sundials/sundials_types.h>
+#include <sundials/sundials_context.h>
 #include <nvector/nvector_serial.h>
 #include <cvode/cvode.h>
 #include <kinsol/kinsol.h>
-#include <sundials/sundials_matrix.h>
-#include <sundials/sundials_linearsolver.h>
+#include <sunmatrix/sunmatrix_dense.h>
+#include <sunlinsol/sunlinsol_dense.h>
 #include "gle_math.h"
 
 /**
@@ -31,6 +32,7 @@ typedef struct {
     double theta0;      /* Initial contact angle */
     double Delta;       /* Domain length */
     double w;           /* Curvature boundary condition */
+    SUNContext sunctx;  /* SUNDIALS context */
 } GLEParams;
 
 /**
@@ -84,7 +86,7 @@ void gle_solution_free(GLESolution *solution);
  * @param user_data Pointer to GLEParams structure
  * @return CVODE return flag
  */
-int gle_ode_system(realtype t, N_Vector y, N_Vector ydot, void *user_data);
+int gle_ode_system(sunrealtype t, N_Vector y, N_Vector ydot, void *user_data);
 
 /**
  * @brief Boundary condition residual function for KINSOL
@@ -121,6 +123,19 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution);
  * @return CVODE memory pointer (NULL on failure)
  */
 void* gle_cvode_init(GLEParams *params);
+
+/**
+ * @brief Create SUNDIALS context
+ * @param params Problem parameters to initialize context
+ * @return 0 on success, -1 on failure
+ */
+int gle_create_context(GLEParams *params);
+
+/**
+ * @brief Destroy SUNDIALS context
+ * @param params Problem parameters containing context
+ */
+void gle_destroy_context(GLEParams *params);
 
 /**
  * @brief Clean up CVODE solver

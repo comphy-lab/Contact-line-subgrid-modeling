@@ -1,15 +1,20 @@
 #include "gle_solver.h"
 #include "gle_math.h"
 #include <cvode/cvode.h>
-#include <cvode/cvode_dense.h>
 #include <kinsol/kinsol.h>
-#include <kinsol/kinsol_dense.h>
-#include <sundials/sundials_dense.h>
+#include <sunmatrix/sunmatrix_dense.h>
+#include <sunlinsol/sunlinsol_dense.h>
+/* Dense matrix operations now in sunmatrix_dense.h */
 #include <sundials/sundials_types.h>
 #include <nvector/nvector_serial.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* For SUNDIALS built with MPI support */
+#ifdef SUNDIALS_MPI_ENABLED
+#include <mpi.h>
+#endif
 
 /**
  * @file GLE_solver-SUNDIALS.c
@@ -26,6 +31,35 @@ void gle_params_init(GLEParams *params) {
     params->theta0 = THETA0_DEFAULT;
     params->Delta = DELTA_DEFAULT;
     params->w = 0.0; /* Curvature boundary condition from DNS */
+    params->sunctx = NULL; /* Will be initialized separately */
+}
+
+int gle_create_context(GLEParams *params) {
+#ifdef SUNDIALS_MPI_ENABLED
+    /* Initialize MPI if not already initialized */
+    int mpi_initialized;
+    MPI_Initialized(&mpi_initialized);
+    if (!mpi_initialized) {
+        int argc = 0;
+        char **argv = NULL;
+        MPI_Init(&argc, &argv);
+    }
+    int flag = SUNContext_Create(MPI_COMM_SELF, &(params->sunctx));
+#else
+    int flag = SUNContext_Create(NULL, &(params->sunctx));
+#endif
+    if (flag != 0) {
+        printf("Error: Failed to create SUNDIALS context\n");
+        return -1;
+    }
+    return 0;
+}
+
+void gle_destroy_context(GLEParams *params) {
+    if (params->sunctx) {
+        SUNContext_Free(&(params->sunctx));
+        params->sunctx = NULL;
+    }
 }
 
 GLESolution* gle_solution_alloc(int n_points) {
@@ -61,7 +95,8 @@ void gle_solution_free(GLESolution *solution) {
     free(solution);
 }
 
-int gle_ode_system(realtype t, N_Vector y, N_Vector ydot, void *user_data) {
+int gle_ode_system(sunrealtype t, N_Vector y, N_Vector ydot, void *user_data) {
+    (void)t; /* Suppress unused parameter warning */
     GLEParams *params = (GLEParams*)user_data;
     
     /* Extract state variables: y = [h, theta, omega] */
@@ -103,7 +138,7 @@ void* gle_cvode_init(GLEParams *params) {
     int flag;
     
     /* Create initial condition vector */
-    y = N_VNew_Serial(NEQ);
+    y = N_VNew_Serial(NEQ, params->sunctx);
     if (!y) return NULL;
     
     /* Set initial conditions */
@@ -112,7 +147,7 @@ void* gle_cvode_init(GLEParams *params) {
     NV_Ith_S(y, 2) = 0.0;                 /* omega(0) = initial guess */
     
     /* Create CVODE memory */
-    cvode_mem = CVodeCreate(CV_BDF, CV_NEWTON);
+    cvode_mem = CVodeCreate(CV_BDF, params->sunctx);
     if (!cvode_mem) {
         N_VDestroy_Serial(y);
         return NULL;
@@ -143,9 +178,9 @@ void* gle_cvode_init(GLEParams *params) {
     }
     
     /* Set up linear solver */
-    SUNMatrix A = SUNDenseMatrix(NEQ, NEQ);
-    SUNLinearSolver LS = SUNDenseLinearSolver(y, A);
-    flag = CVDlsSetLinearSolver(cvode_mem, LS, A);
+    SUNMatrix A = SUNDenseMatrix(NEQ, NEQ, params->sunctx);
+    SUNLinearSolver LS = SUNLinSol_Dense(y, A, params->sunctx);
+    flag = CVodeSetLinearSolver(cvode_mem, LS, A);
     if (flag != CV_SUCCESS) {
         SUNLinSolFree(LS);
         SUNMatDestroy(A);
@@ -167,7 +202,7 @@ void gle_cvode_cleanup(void *cvode_mem) {
 int gle_solve_segment(GLEShootingData *shooting_data, N_Vector y0, 
                       double s_start, double s_end, N_Vector y_final) {
     int flag;
-    realtype t_out;
+    sunrealtype t_out;
     
     /* Reinitialize CVODE for this segment */
     flag = CVodeReInit(shooting_data->cvode_mem, s_start, y0);
@@ -183,7 +218,7 @@ int gle_solve_segment(GLEShootingData *shooting_data, N_Vector y0,
 int gle_boundary_residual(N_Vector u, N_Vector fval, void *user_data) {
     GLEShootingData *data = (GLEShootingData*)user_data;
     GLEParams *params = data->params;
-    int n_seg = data->n_segments;
+    /* int n_seg = data->n_segments; */ /* TODO: Use for multiple shooting */
     
     /* u contains the shooting parameters (initial conditions for each segment) */
     /* For simplicity, we'll implement a basic multiple shooting approach */
@@ -227,8 +262,8 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
     }
     
     /* Create working vectors */
-    y = N_VNew_Serial(NEQ);
-    ydot = N_VNew_Serial(NEQ);
+    y = N_VNew_Serial(NEQ, params->sunctx);
+    ydot = N_VNew_Serial(NEQ, params->sunctx);
     if (!y || !ydot) {
         gle_cvode_cleanup(cvode_mem);
         return -1;
@@ -261,7 +296,7 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
             solution->w_values[i] = NV_Ith_S(y, 2);
         } else {
             /* Integrate to next point */
-            realtype t_out;
+            sunrealtype t_out;
             flag = CVode(cvode_mem, s, y, &t_out, CV_NORMAL);
             if (flag < 0) {
                 printf("Warning: CVode integration failed at s=%g with flag %d\n", s, flag);
