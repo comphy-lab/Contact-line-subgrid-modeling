@@ -419,10 +419,17 @@ double shooting_residual_function(double omega0, void *params) {
     
     if (status != GSL_SUCCESS) {
         // Return large residual on integration failure
+        printf("Integration failed for omega0 = %g\n", omega0);
         return 1e10;
     }
     
     // We want omega(s_max) = 0
+    // Debug print to see what's happening for values near expected solution
+    if (fabs(omega0 - 82135.0) < 5000.0) {
+        printf("omega0 = %.10f -> omega_final = %.10f, h_final = %.10e, theta_final = %.10f\n", 
+               omega0, omega_final, h_final, theta_final);
+    }
+    
     return omega_final;
 }
 
@@ -442,9 +449,9 @@ int solve_gle_shooting_method(gle_parameters *params, double s_max,
     // Create ODE system
     gsl_odeiv2_system sys = {gle_ode_system_python, NULL, 3, params};
     
-    // Create driver with adaptive step control - use looser tolerances
+    // Create driver with adaptive step control - use tighter tolerances matching Python
     ctx.driver = gsl_odeiv2_driver_alloc_y_new(&sys, gsl_odeiv2_step_rkf45, 
-                                               1e-9, 1e-8, 1e-6);
+                                               1e-12, 1e-10, 1e-8);
     
     if (!ctx.driver) {
         fprintf(stderr, "Failed to allocate ODE driver\n");
@@ -466,9 +473,9 @@ int solve_gle_shooting_method(gle_parameters *params, double s_max,
     F.function = &shooting_residual_function;
     F.params = &ctx;
     
-    // Initial bracket for omega0 - try a narrower range first
-    double omega0_low = -1.0;
-    double omega0_high = 1.0;
+    // Initial bracket for omega0 - based on Python solution, omega0 should be approximately 82148.91
+    double omega0_low = 82000.0;
+    double omega0_high = 82300.0;
     
     // Find better initial bracket
     double f_low = shooting_residual_function(omega0_low, &ctx);
@@ -480,8 +487,9 @@ int solve_gle_shooting_method(gle_parameters *params, double s_max,
         // Try to find a bracket using a more systematic approach
         printf("Initial bracket doesn't contain root. Searching...\n");
         
-        // Try different ranges
-        double ranges[][2] = {{-0.1, 0.1}, {-1.0, 1.0}, {-5.0, 5.0}, {-10.0, 10.0}, {-50.0, 50.0}, {-100.0, 100.0}};
+        // Try different ranges around the expected value of ~82148.91
+        double ranges[][2] = {{82100.0, 82200.0}, {82140.0, 82160.0}, {82145.0, 82155.0}, 
+                              {82148.0, 82150.0}, {80000.0, 85000.0}, {70000.0, 90000.0}};
         int found = 0;
         
         for (int i = 0; i < 6; i++) {

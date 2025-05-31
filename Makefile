@@ -3,8 +3,8 @@
 # Date: 2025-05-31
 
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -g -std=c99 -Isrc-local $(shell pkg-config --cflags gsl)
-LDFLAGS = $(shell pkg-config --libs gsl) -Wl,-rpath,/opt/homebrew/Cellar/gsl/2.8/lib
+CFLAGS = -Wall -Wextra -O2 -g -std=c99 -Isrc-local -I/Users/vatsal/anaconda3/include
+LDFLAGS = -L/Users/vatsal/anaconda3/lib -lgsl -lgslcblas -lm
 
 # Check if GSL BVP is available
 GSL_BVP_CHECK := $(shell echo "\#include <gsl/gsl_bvp.h>" | $(CC) -E -x c - >/dev/null 2>&1 && echo "yes" || echo "no")
@@ -71,7 +71,7 @@ compare: run
 
 clean:
 	rm -rf $(BUILD_DIR) $(SOLVER) $(TEST_EXEC)
-	rm -f output/GLE_*_c.csv
+	rm -f output/data-c-gls.csv
 
 help:
 	@echo "Available targets:"
