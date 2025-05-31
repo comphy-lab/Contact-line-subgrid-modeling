@@ -113,6 +113,10 @@ cache/
 *.log
 *.tmp
 
+# Generated output files
+plots/
+py-test/test_plots/
+
 # Explicitly allow Claude files
 !.claude/
 !CLAUDE.md
