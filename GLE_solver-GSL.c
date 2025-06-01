@@ -22,6 +22,9 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
 #include <gsl/gsl_vector.h>
 #include <gsl/gsl_matrix.h>
 #include <gsl/gsl_errno.h>
@@ -51,6 +54,19 @@ double f3_trig(double theta) {
 
 // Main f function combining the helpers
 double f_combined(double theta, double mu_r) {
+    // Handle special cases near theta = 0 and theta = pi
+    // These are based on physical considerations for contact line problems
+    if (theta < 1e-6) {
+        // Near theta = 0, return a large but finite value
+        // This represents the singularity in the contact line problem
+        return 1e4;
+    }
+    
+    if (M_PI - theta < 1e-6) {
+        // Near theta = pi, return a large negative value
+        return -1e4;
+    }
+    
     double f1_theta = f1_trig(theta);
     double f1_pi_minus_theta = f1_trig(M_PI - theta);
     double f2_theta = f2_trig(theta);
@@ -63,12 +79,20 @@ double f_combined(double theta, double mu_r) {
 
     // Guard against division by zero
     if (fabs(denominator) < 1e-15) {
-        // For very small denominators, use L'Hôpital's rule or return a large value
-        // to prevent the solver from exploring this region
-        return 1e6;
+        // Near singularity, return a bounded value based on sign
+        return (numerator > 0) ? 1e4 : -1e4;
     }
 
-    return numerator / denominator;
+    double result = numerator / denominator;
+    
+    // Clip to physically reasonable bounds to prevent numerical instabilities
+    // The maximum value is based on typical scales in contact line problems
+    const double f_max = 1e4;  // Physically motivated upper bound
+    if (fabs(result) > f_max) {
+        return (result > 0) ? f_max : -f_max;
+    }
+
+    return result;
 }
 
 // GLE ODE system matching Python implementation
@@ -88,6 +112,12 @@ int gle_system(double s, const double y[], double dyds[], void *params) {
 
     // domega/ds = 3*Ca*f(theta, mu_r)/(h*(h + 3*lambda_slip)) - cos(theta)
     double f_val = f_combined(theta, MU_R);
+    
+    // Check if f_combined returned NaN (singularity)
+    if (isnan(f_val)) {
+        return GSL_EBADFUNC;
+    }
+    
     double h_factor = h * (h + 3.0 * LAMBDA_SLIP);
 
     // Guard against division by zero
@@ -181,11 +211,23 @@ int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
         printf("Number of iterations: %zu\n", gsl_bvp_niter(bvp_ws));
     }
 
+    // Create output directory if it doesn't exist
+    struct stat st = {0};
+    if (stat("output", &st) == -1) {
+        if (mkdir("output", 0755) != 0) {
+            fprintf(stderr, "Error creating output directory: %s\n", strerror(errno));
+            gsl_bvp_free(bvp_ws);
+            gsl_vector_free(y_initial);
+            gsl_vector_free(solution);
+            return GSL_EFAILED;
+        }
+    }
+
     // Save results to a single file
     FILE *data_file = fopen("output/data-c-gsl.csv", "w");
 
     if (!data_file) {
-        fprintf(stderr, "Error opening output file\n");
+        fprintf(stderr, "Error opening output file: %s\n", strerror(errno));
         gsl_bvp_free(bvp_ws);
         gsl_vector_free(y_initial);
         gsl_vector_free(solution);
@@ -242,6 +284,18 @@ int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
     int status = solve_gle_shooting_method(&params, S_MAX, &s_out, &h_out, &theta_out, &n_points);
 
     if (status == 0) {
+        // Create output directory if it doesn't exist
+        struct stat st = {0};
+        if (stat("output", &st) == -1) {
+            if (mkdir("output", 0755) != 0) {
+                fprintf(stderr, "Error creating output directory: %s\n", strerror(errno));
+                free(s_out);
+                free(h_out);
+                free(theta_out);
+                return GSL_EFAILED;
+            }
+        }
+
         // Write results to single file
         FILE *data_file = fopen("output/data-c-gsl.csv", "w");
 
@@ -306,6 +360,12 @@ int gle_ode_system_python(double s, const double y[], double dyds[], void *param
 
     // domega/ds = 3*Ca*f(theta,mu_r)/(h*(h + 3*lambda_slip)) - cos(theta)
     double f_val = f_combined(theta, p->mu_r);
+    
+    // Check if f_combined returned NaN (singularity)
+    if (isnan(f_val)) {
+        return GSL_EDOM;
+    }
+    
     double denominator = h * (h + 3.0 * p->lambda_slip);
 
     // Check for potential overflow
@@ -313,7 +373,7 @@ int gle_ode_system_python(double s, const double y[], double dyds[], void *param
         return GSL_EDOM;
     }
 
-    // Check if f_val is finite
+    // Check if f_val is finite (catches infinities)
     if (!isfinite(f_val)) {
         return GSL_EDOM;
     }
@@ -372,13 +432,91 @@ double shooting_residual_function(double omega0, void *params) {
     }
 
     // We want omega(s_max) = 0
-    // Debug print to see what's happening for values near expected solution
-    if (fabs(omega0 - 82135.0) < 5000.0) {
-        printf("omega0 = %.10f -> omega_final = %.10f, h_final = %.10e, theta_final = %.10f\n",
-               omega0, omega_final, h_final, theta_final);
-    }
-
     return omega_final;
+}
+
+/**
+ * Exponential search for finding omega0 bracket
+ * 
+ * Starting from an initial guess, exponentially expand the search bracket
+ * until we find function values with opposite signs or reach max width.
+ * 
+ * @param ctx Shooting context with ODE system
+ * @param omega0_guess Initial guess for omega0
+ * @param initial_width Initial bracket width to try
+ * @param max_width Maximum allowed bracket width
+ * @param omega0_low Output: lower bound of bracket
+ * @param omega0_high Output: upper bound of bracket
+ * @return 0 on success (bracket found), -1 on failure
+ */
+int find_omega0_bracket_exponential(shooting_context *ctx, double omega0_guess,
+                                   double initial_width, double max_width,
+                                   double *omega0_low, double *omega0_high) {
+    printf("\nStarting exponential search for omega0 bracket\n");
+    printf("Initial guess: omega0 = %.6f\n", omega0_guess);
+    printf("Initial width: %.2f, Max width: %.2f\n", initial_width, max_width);
+    
+    double width = initial_width;
+    double expansion_factor = 2.0;  // Double the width each iteration
+    int max_iterations = 20;        // Prevent infinite loop
+    int iteration = 0;
+    
+    while (width <= max_width && iteration < max_iterations) {
+        // Try symmetric bracket around guess
+        *omega0_low = omega0_guess - width / 2.0;
+        *omega0_high = omega0_guess + width / 2.0;
+        
+        // Evaluate residual at bracket endpoints
+        double f_low = shooting_residual_function(*omega0_low, ctx);
+        double f_high = shooting_residual_function(*omega0_high, ctx);
+        
+        printf("  Iteration %d: [%.2f, %.2f], width=%.2f, f_low=%.2e, f_high=%.2e\n",
+               iteration, *omega0_low, *omega0_high, width, f_low, f_high);
+        
+        // Check if we have a sign change
+        if (f_low * f_high < 0) {
+            printf("  Found bracket with sign change!\n");
+            return 0;  // Success
+        }
+        
+        // If both residuals are small, we might be very close to the solution
+        if (fabs(f_low) < 1e-6 && fabs(f_high) < 1e-6) {
+            printf("  Both residuals are small - solution might be in this range\n");
+            return 0;
+        }
+        
+        // Try asymmetric expansion based on which side has smaller residual
+        if (iteration > 2) {  // After a few symmetric tries
+            if (fabs(f_low) < fabs(f_high)) {
+                // Expand more on the low side
+                *omega0_low = omega0_guess - width * 0.75;
+                *omega0_high = omega0_guess + width * 0.25;
+            } else {
+                // Expand more on the high side
+                *omega0_low = omega0_guess - width * 0.25;
+                *omega0_high = omega0_guess + width * 0.75;
+            }
+            
+            // Re-evaluate with asymmetric bracket
+            f_low = shooting_residual_function(*omega0_low, ctx);
+            f_high = shooting_residual_function(*omega0_high, ctx);
+            
+            printf("  Asymmetric: [%.2f, %.2f], f_low=%.2e, f_high=%.2e\n",
+                   *omega0_low, *omega0_high, f_low, f_high);
+            
+            if (f_low * f_high < 0) {
+                printf("  Found bracket with sign change (asymmetric)!\n");
+                return 0;
+            }
+        }
+        
+        // Expand the width exponentially
+        width *= expansion_factor;
+        iteration++;
+    }
+    
+    printf("  Failed to find bracket after %d iterations\n", iteration);
+    return -1;  // Failed to find bracket
 }
 
 /**
@@ -454,11 +592,25 @@ double gradient_descent_omega0(shooting_context *ctx, double omega0_init) {
 }
 
 /**
- * Main shooting method solver
+ * Main shooting method solver with configurable omega0 bracket
+ * 
+ * @param params GLE parameters structure
+ * @param s_max Maximum arc length for integration
+ * @param omega0_initial_guess Initial guess for omega0 (use 82150.0 if unsure)
+ * @param initial_bracket_width Initial bracket width (use 10.0 for small search)
+ * @param max_bracket_width Maximum bracket width (use 20000.0 for extensive search)
+ * @param s_out Output array for s values
+ * @param h_out Output array for h values
+ * @param theta_out Output array for theta values
+ * @param n_points Number of output points
+ * @return 0 on success, negative value on error
  */
-int solve_gle_shooting_method(gle_parameters *params, double s_max,
-                             double **s_out, double **h_out, double **theta_out,
-                             int *n_points) {
+int solve_gle_shooting_method_with_bracket(gle_parameters *params, double s_max,
+                                          double omega0_initial_guess,
+                                          double initial_bracket_width,
+                                          double max_bracket_width,
+                                          double **s_out, double **h_out, double **theta_out,
+                                          int *n_points) {
     // Set up shooting context
     shooting_context ctx;
     ctx.gle_params = params;
@@ -493,63 +645,35 @@ int solve_gle_shooting_method(gle_parameters *params, double s_max,
     F.function = &shooting_residual_function;
     F.params = &ctx;
 
-    // Initial bracket for omega0 - based on Python solution, omega0 should be approximately 82148.91
-    double omega0_low = 82000.0;
-    double omega0_high = 82300.0;
-    double omega0 = 0.0;  // Declare omega0 here
+    double omega0_low, omega0_high;
+    double omega0 = 0.0;
 
-    // Find better initial bracket
-    double f_low = shooting_residual_function(omega0_low, &ctx);
-    double f_high = shooting_residual_function(omega0_high, &ctx);
+    // Use exponential search to find bracket
+    int bracket_found = find_omega0_bracket_exponential(&ctx, omega0_initial_guess,
+                                                       initial_bracket_width,
+                                                       max_bracket_width,
+                                                       &omega0_low, &omega0_high);
 
-    printf("Initial bracket test: f(%g) = %g, f(%g) = %g\n", omega0_low, f_low, omega0_high, f_high);
+    if (bracket_found != 0) {
+        printf("Exponential search failed to find bracket\n");
+        printf("Switching to gradient descent optimization...\n");
 
-    if (f_low * f_high > 0) {
-        // Try to find a bracket using a more systematic approach
-        printf("Initial bracket doesn't contain root. Searching...\n");
+        // Use gradient descent starting from the initial guess
+        omega0 = gradient_descent_omega0(&ctx, omega0_initial_guess);
 
-        // Try different ranges around the expected value of ~82148.91
-        double ranges[][2] = {{82100.0, 82200.0}, {82140.0, 82160.0}, {82145.0, 82155.0},
-                              {82148.0, 82150.0}, {80000.0, 85000.0}, {70000.0, 90000.0}};
-        int found = 0;
-
-        for (int i = 0; i < 6; i++) {
-            omega0_low = ranges[i][0];
-            omega0_high = ranges[i][1];
-            f_low = shooting_residual_function(omega0_low, &ctx);
-            f_high = shooting_residual_function(omega0_high, &ctx);
-
-            printf("Testing range [%g, %g]: f_low = %g, f_high = %g\n", omega0_low, omega0_high, f_low, f_high);
-
-            if (f_low * f_high < 0) {
-                printf("Found bracket: [%g, %g]\n", omega0_low, omega0_high);
-                found = 1;
-                break;
-            }
+        // Check if gradient descent found a good solution
+        double final_residual = shooting_residual_function(omega0, &ctx);
+        if (fabs(final_residual) > 1e-6) {
+            fprintf(stderr, "Gradient descent failed to find good solution: residual = %.2e\n", final_residual);
+            gsl_root_fsolver_free(solver);
+            gsl_odeiv2_driver_free(ctx.driver);
+            return -1;
         }
 
-        if (!found) {
-            printf("Cannot find valid bracket for omega0\n");
-            printf("Switching to gradient descent optimization...\n");
+        printf("Gradient descent found omega0 = %.15f with residual = %.2e\n", omega0, final_residual);
 
-            // Use gradient descent starting from a reasonable initial guess
-            double omega0_init = 82150.0;  // Near expected value
-            omega0 = gradient_descent_omega0(&ctx, omega0_init);
-
-            // Check if gradient descent found a good solution
-            double final_residual = shooting_residual_function(omega0, &ctx);
-            if (fabs(final_residual) > 1e-6) {
-                fprintf(stderr, "Gradient descent failed to find good solution: residual = %.2e\n", final_residual);
-                gsl_root_fsolver_free(solver);
-                gsl_odeiv2_driver_free(ctx.driver);
-                return -1;
-            }
-
-            printf("Gradient descent found omega0 = %.15f with residual = %.2e\n", omega0, final_residual);
-
-            // Skip the bracketing solver and go directly to solution generation
-            goto generate_solution;
-        }
+        // Skip the bracketing solver and go directly to solution generation
+        goto generate_solution;
     }
 
     // Set up solver
@@ -624,7 +748,17 @@ generate_solution:
 
         if (status != GSL_SUCCESS) {
             fprintf(stderr, "Integration failed at s = %g\n", s);
-            break;
+            // Free allocated memory before returning error
+            free(*s_out);
+            free(*h_out);
+            free(*theta_out);
+            *s_out = NULL;
+            *h_out = NULL;
+            *theta_out = NULL;
+            *n_points = 0;
+            gsl_root_fsolver_free(solver);
+            gsl_odeiv2_driver_free(ctx.driver);
+            return -1;
         }
 
         (*h_out)[i] = y[0];
@@ -636,6 +770,26 @@ generate_solution:
     gsl_odeiv2_driver_free(ctx.driver);
 
     return 0;
+}
+
+/**
+ * Main shooting method solver - wrapper for backward compatibility
+ * Uses default bracket parameters based on the known solution behavior
+ */
+int solve_gle_shooting_method(gle_parameters *params, double s_max,
+                             double **s_out, double **h_out, double **theta_out,
+                             int *n_points) {
+    // Default parameters based on Python solution behavior
+    double omega0_initial_guess = 82150.0;  // Near expected solution
+    double initial_bracket_width = 10.0;    // Start with small bracket
+    double max_bracket_width = 20000.0;     // Allow wide search if needed
+    
+    return solve_gle_shooting_method_with_bracket(params, s_max,
+                                                 omega0_initial_guess,
+                                                 initial_bracket_width,
+                                                 max_bracket_width,
+                                                 s_out, h_out, theta_out,
+                                                 n_points);
 }
 
 // Main function: Only compile if not building for tests (COMPILING_TESTS is not defined)
@@ -657,7 +811,13 @@ int main(int argc, char *argv[]) {
     }
 
     // Create output directory if it doesn't exist
-    system("mkdir -p output");
+    struct stat st = {0};
+    if (stat("output", &st) == -1) {
+        if (mkdir("output", 0755) != 0) {
+            fprintf(stderr, "Error creating output directory: %s\n", strerror(errno));
+            return 1;
+        }
+    }
 
     // Run solver
     size_t num_nodes = 100000;  // Match Python's 10000 points

@@ -69,6 +69,14 @@ int solve_gle_shooting_method(gle_parameters *params, double s_max,
                              double **s_out, double **h_out, double **theta_out, 
                              int *n_points);
 
+// Shooting method solver with configurable initial omega0 bracket
+int solve_gle_shooting_method_with_bracket(gle_parameters *params, double s_max,
+                                          double omega0_initial_guess,
+                                          double initial_bracket_width,
+                                          double max_bracket_width,
+                                          double **s_out, double **h_out, double **theta_out,
+                                          int *n_points);
+
 // Helper function for shooting residual
 double shooting_residual_function(double omega0, void *params);
 
@@ -77,5 +85,10 @@ int integrate_ode(double omega0, shooting_context *ctx, double *h_final, double 
 
 // Gradient descent optimization for omega0
 double gradient_descent_omega0(shooting_context *ctx, double omega0_init);
+
+// Exponential search for finding omega0 bracket
+int find_omega0_bracket_exponential(shooting_context *ctx, double omega0_guess,
+                                   double initial_width, double max_width,
+                                   double *omega0_low, double *omega0_high);
 
 #endif // GLE_SOLVER_GSL_H
