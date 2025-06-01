@@ -15,6 +15,40 @@ Consider a thin liquid film spreading on a solid substrate:
 
 The GLE provide the mathematical framework to connect these scales seamlessly.
 
+## Project Structure
+
+### Core Implementation Files
+
+- **`GLE_solver.py`**: Python implementation of the GLE solver using scipy's odeint
+- **`GLE_solver-GSL.c`**: Main C program entry point with comprehensive documentation
+- **`huh_scriven_velocity.py`**: Analyzes Huh-Scriven velocity fields near contact lines
+- **`compare_results.py`**: Compares outputs between Python and C implementations
+
+### Header Files (src-local/)
+
+All modules are implemented as header-only libraries with static inline functions:
+
+- **`GLE_solver-GSL.h`**: Main header with constants, structures, and function declarations
+- **`gle_physics.h`**: Physical functions including the viscous dissipation function f(θ,μᵣ)
+- **`gle_ode_systems.h`**: ODE system definitions for GSL integration
+- **`gle_shooting.h`**: Shooting method implementation with optimization algorithms
+- **`gle_io.h`**: Input/output operations for data files
+- **`gle_optimization.h`**: Stub header for backward compatibility
+
+### Test Files
+
+- **`test/test_GLE_solver.py`**: Python unit tests
+- **`test/test_GLE_solver-GSL.c`**: C unit tests with colorful output
+- **`test/test_integration.py`**: Integration tests comparing C and Python results
+- **`test/test_huh_scriven_velocity.py`**: Tests for velocity field analysis
+- **`test/run_tests.sh`**: Shell script to run all tests
+
+### Build System
+
+- **`Makefile`**: Build configuration for C implementation
+- **`requirements-python.txt`**: Python dependencies
+- **`pytest.ini`**: Pytest configuration
+
 ## Python Implementation
 
 The Python implementation provides tools to solve the GLE and analyze related phenomena:

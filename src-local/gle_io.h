@@ -1,11 +1,14 @@
 /**
- * gle_io.c
+ * gle_io.h
  * 
  * Input/Output operations for the GLE solver
  * Handles file creation, data writing, and directory management
  * 
  * Date: 2025-06-02
  */
+
+#ifndef GLE_IO_H
+#define GLE_IO_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +23,7 @@
  * Create output directory if it doesn't exist
  * Returns 0 on success, -1 on failure
  */
-int create_output_directory(const char *dirname) {
+static inline int create_output_directory(const char *dirname) {
     struct stat st = {0};
     
     if (stat(dirname, &st) == -1) {
@@ -38,7 +41,7 @@ int create_output_directory(const char *dirname) {
  * Write solution data to CSV file
  * Format: s,h,theta with high precision
  */
-int write_solution_to_csv(const char *filename, 
+static inline int write_solution_to_csv(const char *filename, 
                          double *s_data, double *h_data, double *theta_data,
                          int n_points) {
     FILE *file = fopen(filename, "w");
@@ -71,7 +74,7 @@ int write_solution_to_csv(const char *filename,
  * 3. Integrate with found ω₀ to generate full solution
  * 4. Save results to CSV file for analysis/plotting
  */
-int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
+static inline int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
     (void)num_nodes;  // Not used - we use fixed number in shooting method
     
     // Set up parameters
@@ -120,3 +123,5 @@ int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
 
     return GSL_EFAILED;
 }
+
+#endif // GLE_IO_H

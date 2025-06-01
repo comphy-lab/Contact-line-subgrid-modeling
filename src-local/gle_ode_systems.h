@@ -1,12 +1,14 @@
 /**
- * gle_ode_systems.c
+ * gle_ode_systems.h
  * 
  * ODE systems for the GLE solver
  * Contains the differential equation systems used for integration
  * 
- * Author: Vatsal Sanjay
  * Date: 2025-06-02
  */
+
+#ifndef GLE_ODE_SYSTEMS_H
+#define GLE_ODE_SYSTEMS_H
 
 #include <math.h>
 #include <gsl/gsl_errno.h>
@@ -19,7 +21,7 @@
  * State vector: y = [h, θ, ω]
  * Derivatives: dyds = [dh/ds, dθ/ds, dω/ds]
  */
-int gle_system(double s, const double y[], double dyds[], void *params) {
+static inline int gle_system(double s, const double y[], double dyds[], void *params) {
     (void)params;  // Unused
     (void)s;       // s is not used in the equations
 
@@ -60,7 +62,7 @@ int gle_system(double s, const double y[], double dyds[], void *params) {
  * State: y = [h, θ, ω] where ω = dθ/ds (curvature)
  * Returns GSL_EDOM if solution becomes unphysical
  */
-int gle_ode_system_python(double s, const double y[], double dyds[], void *params) {
+static inline int gle_ode_system_python(double s, const double y[], double dyds[], void *params) {
     (void)s;  // Unused parameter - required by GSL interface
     gle_parameters *p = (gle_parameters *)params;
 
@@ -104,3 +106,5 @@ int gle_ode_system_python(double s, const double y[], double dyds[], void *param
 
     return GSL_SUCCESS;
 }
+
+#endif // GLE_ODE_SYSTEMS_H

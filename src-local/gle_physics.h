@@ -1,12 +1,14 @@
 /**
- * gle_physics.c
+ * gle_physics.h
  * 
  * Physical functions for the GLE solver
  * Contains the viscous dissipation function f(θ, μᵣ) and its components
  * 
- * Author: Vatsal Sanjay
  * Date: 2025-06-02
  */
+
+#ifndef GLE_PHYSICS_H
+#define GLE_PHYSICS_H
 
 #include <math.h>
 #include "GLE_solver-GSL.h"
@@ -15,15 +17,15 @@
  * Helper functions for computing f(θ, μᵣ) - the viscous dissipation function
  * These arise from the exact solution of Stokes flow near a moving contact line
  */
-double f1_trig(double theta) {
+static inline double f1_trig(double theta) {
     return theta * theta - sin(theta) * sin(theta);
 }
 
-double f2_trig(double theta) {
+static inline double f2_trig(double theta) {
     return theta - sin(theta) * cos(theta);
 }
 
-double f3_trig(double theta) {
+static inline double f3_trig(double theta) {
     return theta * (M_PI - theta) + sin(theta) * sin(theta);
 }
 
@@ -34,7 +36,7 @@ double f3_trig(double theta) {
  * 
  * The function has singularities at θ = 0 and θ = π which are handled by clamping.
  */
-double f_combined(double theta, double mu_r) {
+static inline double f_combined(double theta, double mu_r) {
     // Avoid exact boundaries where singularities occur
     const double theta_min = 1e-10;
     const double theta_max = M_PI - 1e-10;
@@ -64,3 +66,5 @@ double f_combined(double theta, double mu_r) {
 
     return numerator / denominator;
 }
+
+#endif // GLE_PHYSICS_H

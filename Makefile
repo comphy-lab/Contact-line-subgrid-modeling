@@ -30,12 +30,7 @@ BUILD_DIR = build
 SOLVER = gle_solver_gsl
 TEST_EXEC = test_gle_solver_gsl
 
-# Core object files from src-local
-CORE_OBJS = $(BUILD_DIR)/gle_physics.o \
-            $(BUILD_DIR)/gle_ode_systems.o \
-            $(BUILD_DIR)/gle_optimization.o \
-            $(BUILD_DIR)/gle_shooting.o \
-            $(BUILD_DIR)/gle_io.o
+# No core object files needed - all functions are static inline in headers
 
 # Main program object
 SOLVER_OBJ = $(BUILD_DIR)/GLE_solver-GSL.o
@@ -51,35 +46,28 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # Build the solver executable
-$(SOLVER): $(SOLVER_OBJ) $(CORE_OBJS)
+$(SOLVER): $(SOLVER_OBJ)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
-# Build the solver object file
-$(BUILD_DIR)/GLE_solver-GSL.o: $(SRC_DIR)/GLE_solver-GSL.c $(SRC_LOCAL_DIR)/GLE_solver-GSL.h
-	$(CC) $(CFLAGS) -c $< -o $@
 
-# Build core object files from src-local
-$(BUILD_DIR)/gle_physics.o: $(SRC_LOCAL_DIR)/gle_physics.c $(SRC_LOCAL_DIR)/GLE_solver-GSL.h
-	$(CC) $(CFLAGS) -c $< -o $@
+# Header dependencies for rebuild when headers change
+HEADERS = $(SRC_LOCAL_DIR)/GLE_solver-GSL.h \
+          $(SRC_LOCAL_DIR)/gle_physics.h \
+          $(SRC_LOCAL_DIR)/gle_ode_systems.h \
+          $(SRC_LOCAL_DIR)/gle_optimization.h \
+          $(SRC_LOCAL_DIR)/gle_shooting.h \
+          $(SRC_LOCAL_DIR)/gle_io.h
 
-$(BUILD_DIR)/gle_ode_systems.o: $(SRC_LOCAL_DIR)/gle_ode_systems.c $(SRC_LOCAL_DIR)/GLE_solver-GSL.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/gle_optimization.o: $(SRC_LOCAL_DIR)/gle_optimization.c $(SRC_LOCAL_DIR)/GLE_solver-GSL.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/gle_shooting.o: $(SRC_LOCAL_DIR)/gle_shooting.c $(SRC_LOCAL_DIR)/GLE_solver-GSL.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/gle_io.o: $(SRC_LOCAL_DIR)/gle_io.c $(SRC_LOCAL_DIR)/GLE_solver-GSL.h
+# Update dependency for main object file
+$(BUILD_DIR)/GLE_solver-GSL.o: $(SRC_DIR)/GLE_solver-GSL.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Build the test executable
-$(TEST_EXEC): $(TEST_OBJ) $(CORE_OBJS)
+$(TEST_EXEC): $(TEST_OBJ)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 # Build test object file
-$(BUILD_DIR)/test_GLE_solver-GSL.o: $(TEST_DIR)/test_GLE_solver-GSL.c $(SRC_LOCAL_DIR)/GLE_solver-GSL.h
+$(BUILD_DIR)/test_GLE_solver-GSL.o: $(TEST_DIR)/test_GLE_solver-GSL.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 test: $(TEST_EXEC)
