@@ -2,17 +2,66 @@
  * GLE_solver-GSL.c
  *
  * C implementation of the Generalized Lubrication Equations (GLE) solver
- * that matches the Python implementation exactly.
+ * for modeling contact line dynamics in thin liquid films.
  *
- * This solver solves the coupled ODEs for contact line dynamics:
- * - dh/ds = sin(theta)
- * - dtheta/ds = omega
- * - domega/ds = 3*Ca*f(theta, mu_r)/(h*(h + 3*lambda_slip)) - cos(theta)
+ * SCIENTIFIC BACKGROUND:
+ * =====================
+ * This code solves the contact line problem where a liquid-gas interface meets
+ * a solid substrate. The challenge is to bridge microscopic physics (molecular
+ * scale) with macroscopic fluid dynamics. The GLE provide this bridge by
+ * incorporating slip effects near the contact line.
  *
- * Boundary conditions:
- * - theta(0) = pi/6
- * - h(0) = lambda_slip
- * - omega(s_max) = w (curvature at outer boundary)
+ * MATHEMATICAL FORMULATION:
+ * ========================
+ * The solver addresses the coupled system of ODEs:
+ *   dh/ds = sin(θ)                    ... (1) Interface height evolution
+ *   dθ/ds = ω                          ... (2) Interface angle evolution  
+ *   dω/ds = 3Ca·f(θ,μᵣ)/(h(h+3λ)) - cos(θ) ... (3) Curvature evolution
+ *
+ * Where:
+ * - s: Arc length coordinate along the interface
+ * - h(s): Film thickness profile
+ * - θ(s): Local interface angle with respect to substrate
+ * - ω(s): Interface curvature (dθ/ds)
+ * - Ca: Capillary number (viscous forces / surface tension)
+ * - λ: Navier slip length (molecular scale parameter)
+ * - μᵣ: Viscosity ratio (gas/liquid)
+ * - f(θ,μᵣ): Complex function encoding viscous dissipation
+ *
+ * BOUNDARY CONDITIONS:
+ * ===================
+ * - At contact line (s=0): θ(0) = π/6 (30°), h(0) = λ
+ * - At far field (s=s_max): ω(s_max) = 0 (matches outer solution)
+ *
+ * NUMERICAL METHOD:
+ * ================
+ * The code uses an Initial Value Problem (IVP) approach with shooting method:
+ * 
+ * 1. SHOOTING METHOD STRATEGY:
+ *    - Guess initial curvature ω₀ = ω(0)
+ *    - Integrate ODEs from s=0 to s=s_max
+ *    - Check if ω(s_max) = 0 (boundary condition)
+ *    - Adjust ω₀ until boundary condition is satisfied
+ *
+ * 2. INTEGRATION:
+ *    - Uses GSL's adaptive Runge-Kutta-Fehlberg (4,5) method
+ *    - Tight tolerances (1e-10 relative, 1e-12 absolute)
+ *    - Adaptive step size for efficiency and accuracy
+ *
+ * 3. ROOT FINDING FOR ω₀:
+ *    - Primary: Exponential search for bracketing + Brent's method
+ *    - Fallback: Gradient descent with adaptive learning rate
+ *    - Convergence criterion: |ω(s_max)| < 1e-8
+ *
+ * 4. PHYSICAL CONSTRAINTS:
+ *    - h > 0 (positive film thickness)
+ *    - 0 < θ < π (interface remains physical)
+ *    - Singularity handling in f(θ,μᵣ) near θ = 0, π
+ *
+ * OUTPUT:
+ * =======
+ * The solver generates profiles h(s) and θ(s) that describe the interface
+ * shape from molecular (contact line) to macroscopic scales.
  *
  * Author: Vatsal Sanjay
  * Date: 2025-05-31
@@ -35,7 +84,10 @@
 
 // Physical parameters are now defined in the header file
 
-// Helper functions for f(theta, mu_r) calculation
+/**
+ * Helper functions for computing f(θ, μᵣ) - the viscous dissipation function
+ * These arise from the exact solution of Stokes flow near a moving contact line
+ */
 double f1_trig(double theta) {
     return theta * theta - sin(theta) * sin(theta);
 }
@@ -48,7 +100,13 @@ double f3_trig(double theta) {
     return theta * (M_PI - theta) + sin(theta) * sin(theta);
 }
 
-// Main f function combining the helpers
+/**
+ * Computes f(θ, μᵣ) - the dimensionless function that encodes viscous dissipation
+ * in the wedge flow near the contact line. This function comes from matching
+ * the inner (wedge) and outer (lubrication) asymptotic solutions.
+ * 
+ * The function has singularities at θ = 0 and θ = π which are handled by clamping.
+ */
 double f_combined(double theta, double mu_r) {
     // Avoid exact boundaries where singularities occur
     // The ODE integrator should avoid these regions
@@ -85,7 +143,13 @@ double f_combined(double theta, double mu_r) {
     return result;
 }
 
-// GLE ODE system matching Python implementation
+/**
+ * GLE ODE system for the coupled evolution equations
+ * This is used by the main solver for output generation
+ * 
+ * State vector: y = [h, θ, ω]
+ * Derivatives: dyds = [dh/ds, dθ/ds, dω/ds]
+ */
 int gle_system(double s, const double y[], double dyds[], void *params) {
     (void)params;  // Unused
     (void)s;       // s is not used in the equations
@@ -120,7 +184,15 @@ int gle_system(double s, const double y[], double dyds[], void *params) {
     return GSL_SUCCESS;
 }
 
-// Main solver function using shooting method
+/**
+ * Main solver function - orchestrates the shooting method solution
+ * 
+ * ALGORITHM STEPS:
+ * 1. Set up physical parameters (Ca, λ, μᵣ)
+ * 2. Call shooting method to find ω₀
+ * 3. Integrate with found ω₀ to generate full solution
+ * 4. Save results to CSV file for analysis/plotting
+ */
 int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
     (void)num_nodes;  // Not used - we use fixed number in shooting method
     
@@ -186,8 +258,11 @@ int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
 // ============================================================================
 
 /**
- * ODE system matching Python implementation for shooting method
- * y[0] = h, y[1] = theta, y[2] = omega (dtheta/ds)
+ * ODE system for the shooting method integration
+ * Includes additional checks for physical validity during integration
+ * 
+ * State: y = [h, θ, ω] where ω = dθ/ds (curvature)
+ * Returns GSL_EDOM if solution becomes unphysical
  */
 int gle_ode_system_python(double s, const double y[], double dyds[], void *params) {
     (void)s;  // Unused parameter - required by GSL interface
@@ -272,8 +347,11 @@ int integrate_ode(double omega0, shooting_context *ctx, double *h_final, double 
 }
 
 /**
- * Shooting residual function for root finding
- * We want omega(s_max) = 0
+ * Shooting residual function R(ω₀) = ω(s_max; ω₀)
+ * 
+ * For a given initial curvature ω₀, this integrates the ODEs and returns
+ * the final curvature ω(s_max). The shooting method finds ω₀ such that R(ω₀) = 0,
+ * satisfying the far-field boundary condition.
  */
 double shooting_residual_function(double omega0, void *params) {
     shooting_context *ctx = (shooting_context *)params;
@@ -292,13 +370,20 @@ double shooting_residual_function(double omega0, void *params) {
 }
 
 /**
- * Exponential search for finding omega0 bracket
+ * Exponential search for bracketing the root of R(ω₀)
  * 
- * Starting from an initial guess, exponentially expand the search bracket
- * until we find function values with opposite signs or reach max width.
+ * ALGORITHM:
+ * 1. Start with small bracket [ω₀ - w/2, ω₀ + w/2] around initial guess
+ * 2. Evaluate R at both endpoints
+ * 3. If R changes sign → found bracket
+ * 4. Otherwise, double width w and repeat
+ * 5. After a few iterations, try asymmetric expansion based on residuals
+ * 
+ * This is more robust than fixed bracketing for problems where the root
+ * location is not well known a priori.
  * 
  * @param ctx Shooting context with ODE system
- * @param omega0_guess Initial guess for omega0
+ * @param omega0_guess Initial guess for ω₀ (typically ~82150 for our parameters)
  * @param initial_width Initial bracket width to try
  * @param max_width Maximum allowed bracket width
  * @param omega0_low Output: lower bound of bracket
@@ -376,7 +461,18 @@ int find_omega0_bracket_exponential(shooting_context *ctx, double omega0_guess,
 }
 
 /**
- * Gradient descent optimization for finding omega0
+ * Gradient descent optimization for finding ω₀
+ * 
+ * Used as fallback when bracketing fails. This implements:
+ * - Adaptive learning rate based on progress
+ * - Line search to ensure descent
+ * - Numerical gradient computation via finite differences
+ * 
+ * The method minimizes |R(ω₀)|² where R is the shooting residual.
+ * 
+ * @param ctx Shooting context
+ * @param omega0_init Starting guess for ω₀
+ * @return Optimized value of ω₀
  */
 double gradient_descent_omega0(shooting_context *ctx, double omega0_init) {
     double omega0 = omega0_init;
@@ -448,16 +544,39 @@ double gradient_descent_omega0(shooting_context *ctx, double omega0_init) {
 }
 
 /**
- * Main shooting method solver with configurable omega0 bracket
+ * Main shooting method implementation
+ * 
+ * COMPLETE ALGORITHM:
+ * 
+ * 1. SETUP PHASE:
+ *    - Initialize ODE system with physical parameters
+ *    - Create GSL ODE driver with adaptive step control
+ *    - Set initial conditions: h(0) = λ, θ(0) = π/6
+ * 
+ * 2. FIND ω₀ (SHOOTING PHASE):
+ *    - Try exponential search to bracket root
+ *    - If successful: Use Brent's method for root finding
+ *    - If failed: Switch to gradient descent optimization
+ *    - Continue until |ω(s_max)| < 1e-8
+ * 
+ * 3. SOLUTION GENERATION:
+ *    - Integrate ODEs with converged ω₀
+ *    - Store solution at 1000 points along s ∈ [0, s_max]
+ *    - Output arrays: s, h(s), θ(s)
+ * 
+ * 4. ERROR HANDLING:
+ *    - Check for integration failures (unphysical solutions)
+ *    - Verify memory allocation
+ *    - Clean up resources on any failure
  * 
  * @param params GLE parameters structure
  * @param s_max Maximum arc length for integration
- * @param omega0_initial_guess Initial guess for omega0 (use 82150.0 if unsure)
+ * @param omega0_initial_guess Initial guess for ω₀ (use 82150.0 if unsure)
  * @param initial_bracket_width Initial bracket width (use 10.0 for small search)
  * @param max_bracket_width Maximum bracket width (use 20000.0 for extensive search)
  * @param s_out Output array for s values
  * @param h_out Output array for h values
- * @param theta_out Output array for theta values
+ * @param theta_out Output array for θ values
  * @param n_points Number of output points
  * @return 0 on success, negative value on error
  */

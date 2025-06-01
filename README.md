@@ -1,6 +1,19 @@
 # Contact-line-subgrid-modeling
 
-This repository contains implementations for modeling contact line dynamics, including Python and C versions of a Generalized Lubrication Equation (GLE) solver. The solvers use shooting methods to solve the coupled ODEs that describe the interface shape near a moving contact line.
+This repository contains implementations for modeling contact line dynamics in thin liquid films, including Python and C versions of a Generalized Lubrication Equation (GLE) solver. The code addresses a fundamental problem in fluid dynamics: how to model the motion of a contact line (where liquid, gas, and solid meet) across multiple length scales.
+
+## Scientific Background
+
+The contact line problem is a classic challenge in fluid mechanics. Standard continuum models predict infinite viscous dissipation at a moving contact line - the famous "contact line singularity." This solver implements a multiscale approach that resolves this singularity by incorporating molecular-scale physics (slip) into the continuum description.
+
+### Physical Problem
+
+Consider a thin liquid film spreading on a solid substrate:
+- **Microscale** (~nm): Molecular interactions dominate, allowing slip at the wall
+- **Mesoscale** (~μm): Viscous forces balance surface tension in a wedge flow
+- **Macroscale** (~mm): Lubrication approximation describes the thin film
+
+The GLE provide the mathematical framework to connect these scales seamlessly.
 
 ## Python Implementation
 
@@ -105,24 +118,83 @@ Both Python and C solvers generate output files in the `output/` directory:
 - `output/GLE_theta_profile.png`: Visualization of contact angle profile
 - `output/comparison_python_vs_c.png`: Side-by-side comparison (when using `make compare`)
 
-### Solver Algorithm
+### Mathematical Formulation
 
-The C implementation uses an IVP+shooting method approach:
+The solver addresses the Generalized Lubrication Equations (GLE), a system of coupled ODEs:
 
-**Initial Value Problem (IVP):**
-- Solves the coupled ODEs: dh/ds = sin(θ), dθ/ds = ω, dω/ds = 3Ca·f(θ,μᵣ)/(h(h+3λ)) - cos(θ)
-- Initial conditions: h(0) = λ (slip length), θ(0) = π/6 (30°)
-- Uses GSL's adaptive Runge-Kutta-Fehlberg (4,5) integrator with tight tolerances
+```
+dh/ds = sin(θ)                                    ... (1)
+dθ/ds = ω                                         ... (2)
+dω/ds = 3Ca·f(θ,μᵣ)/(h(h+3λ)) - cos(θ)          ... (3)
+```
 
-**Shooting Method:**
-1. Searches for the correct initial value ω₀ such that ω(s_max) = 0
-2. First attempts exponential search to bracket the solution
-3. If bracketing succeeds, uses Brent's method for root finding
-4. If bracketing fails, automatically switches to gradient descent optimization
-5. Gradient descent uses adaptive learning rates and line search
-6. Achieves convergence tolerance of 1e-8 for the boundary condition residual
+Where:
+- `s`: Arc length coordinate along the liquid-gas interface
+- `h(s)`: Film thickness profile
+- `θ(s)`: Local interface angle with the substrate
+- `ω(s)`: Interface curvature (dθ/ds)
+- `Ca`: Capillary number (ratio of viscous to surface tension forces)
+- `λ`: Navier slip length (molecular-scale parameter)
+- `μᵣ`: Viscosity ratio (gas/liquid)
+- `f(θ,μᵣ)`: Viscous dissipation function from wedge flow analysis
 
-**Note:** The code originally included provisions for a Boundary Value Problem (BVP) solver, but since GSL doesn't provide BVP functionality, only the IVP+shooting method is implemented.
+### Boundary Conditions
+
+1. **At the contact line (s = 0)**:
+   - `θ(0) = θ₀` (microscopic contact angle, default 30°)
+   - `h(0) = λ` (film height equals slip length)
+
+2. **In the far field (s = s_max)**:
+   - `ω(s_max) = 0` (curvature vanishes, matching outer solution)
+
+### Numerical Algorithm
+
+The implementation uses an IVP+shooting method approach:
+
+#### 1. Initial Value Problem (IVP) Setup
+- Convert the boundary value problem to an IVP by guessing ω₀ = ω(0)
+- Integrate from s = 0 to s = s_max using the guessed ω₀
+- Check if the far-field boundary condition ω(s_max) = 0 is satisfied
+
+#### 2. Shooting Method
+The shooting method finds the correct ω₀ by solving R(ω₀) = 0, where R(ω₀) = ω(s_max; ω₀):
+
+**Phase 1: Bracketing**
+- Start with initial guess ω₀ ≈ 82150 (empirically determined)
+- Use exponential search to find [ω₀_low, ω₀_high] where R changes sign
+- Double the search width iteratively until bracket is found
+
+**Phase 2: Root Finding**
+- If bracketing succeeds: Use Brent's method (guaranteed convergence)
+- If bracketing fails: Switch to gradient descent optimization
+- Convergence criterion: |R(ω₀)| < 1e-8
+
+#### 3. Integration Details
+- Method: Adaptive Runge-Kutta-Fehlberg (4,5) from GSL
+- Tolerances: 1e-10 (relative), 1e-12 (absolute)
+- Step size: Automatically adapted based on local error estimates
+
+#### 4. Solution Generation
+Once ω₀ is found:
+- Re-integrate the ODEs with the converged ω₀
+- Store solution at 1000 points uniformly distributed in s ∈ [0, s_max]
+- Output: Arrays of s, h(s), and θ(s)
+
+### Physical Constraints and Singularity Handling
+
+1. **Film thickness**: h > 0 (enforced during integration)
+2. **Interface angle**: 0 < θ < π (clamped to avoid singularities)
+3. **Dissipation function**: f(θ,μᵣ) has singularities at θ = 0, π
+   - Handled by clamping: θ ∈ [1e-10, π - 1e-10]
+   - Returns large finite values near singularities
+
+### Gradient Descent Fallback
+
+When bracketing fails, the solver uses gradient descent to minimize |R(ω₀)|²:
+- Numerical gradient: ∇R ≈ [R(ω₀ + ε) - R(ω₀)]/ε
+- Adaptive learning rate with line search
+- Maximum 200 iterations
+- Typically converges within 50-100 iterations
 
 ### Comparing C and Python Results
 
@@ -195,10 +267,39 @@ Shows all available targets:
 - `make clean` - Clean build artifacts
 - `make help` - Show help message
 
-## Mathematical Background
+## Physical Interpretation of Results
 
-The solvers implement the Generalized Lubrication Equations (GLE) for contact line dynamics:
-- The system describes the interface shape h(s) and angle θ(s) along arc length s
-- Key parameters: Capillary number (Ca), slip length (λ), viscosity ratio (μ_r)
-- Boundary conditions enforce matching to the macroscopic contact angle
-- Both solvers use shooting methods to find the correct initial conditions
+The solution profiles h(s) and θ(s) reveal the multiscale structure:
+
+1. **Near contact line (s → 0)**:
+   - h ~ s (linear growth from slip length)
+   - θ remains close to θ₀ (microscopic angle)
+   - Strong curvature ω indicates rapid adjustment
+
+2. **Intermediate region**:
+   - Transition from molecular to continuum physics
+   - Interface angle θ increases toward macroscopic value
+   - Curvature ω decreases
+
+3. **Far field (s → s_max)**:
+   - h grows more slowly
+   - θ approaches asymptotic value
+   - ω → 0 (matches outer lubrication solution)
+
+The parameter f(θ,μᵣ) encodes how viscous dissipation depends on the local interface configuration and viscosity contrast.
+
+## Applications
+
+This model is relevant for:
+- Coating and printing processes
+- Microfluidics and lab-on-chip devices
+- Enhanced oil recovery
+- Understanding dewetting and film stability
+- Biomedical applications (tear films, lung surfactants)
+
+## References
+
+The mathematical formulation follows:
+- Huh & Scriven (1971): Original wedge flow analysis
+- Cox (1986): Asymptotic matching for moving contact lines
+- Snoeijer & Andreotti (2013): Review of moving contact line physics
