@@ -36,7 +36,7 @@ pytest test/
 
 ## C Implementation (`GLE_solver-GSL`)
 
-A C implementation of the GLE solver using the GNU Scientific Library (GSL) is provided. The solver uses an enhanced shooting method with gradient descent optimization for robust convergence.
+A C implementation of the GLE solver using the GNU Scientific Library (GSL) is provided. The solver uses an Initial Value Problem (IVP) approach with an enhanced shooting method that includes gradient descent optimization for robust convergence.
 
 ### Dependencies (C)
 - A C compiler (e.g., GCC)
@@ -107,11 +107,22 @@ Both Python and C solvers generate output files in the `output/` directory:
 
 ### Solver Algorithm
 
-The C implementation uses an enhanced shooting method that:
-1. First attempts traditional bracketing to find the initial value ω₀
-2. If bracketing fails, automatically switches to gradient descent optimization
-3. Uses adaptive learning rates and line search for robust convergence
-4. Achieves convergence tolerance of 1e-8 for the boundary condition residual
+The C implementation uses an IVP+shooting method approach:
+
+**Initial Value Problem (IVP):**
+- Solves the coupled ODEs: dh/ds = sin(θ), dθ/ds = ω, dω/ds = 3Ca·f(θ,μᵣ)/(h(h+3λ)) - cos(θ)
+- Initial conditions: h(0) = λ (slip length), θ(0) = π/6 (30°)
+- Uses GSL's adaptive Runge-Kutta-Fehlberg (4,5) integrator with tight tolerances
+
+**Shooting Method:**
+1. Searches for the correct initial value ω₀ such that ω(s_max) = 0
+2. First attempts exponential search to bracket the solution
+3. If bracketing succeeds, uses Brent's method for root finding
+4. If bracketing fails, automatically switches to gradient descent optimization
+5. Gradient descent uses adaptive learning rates and line search
+6. Achieves convergence tolerance of 1e-8 for the boundary condition residual
+
+**Note:** The code originally included provisions for a Boundary Value Problem (BVP) solver, but since GSL doesn't provide BVP functionality, only the IVP+shooting method is implemented.
 
 ### Comparing C and Python Results
 
@@ -152,12 +163,12 @@ The Makefile already includes runtime path fixes, but if issues persist:
 3. For conda users, ensure your environment is activated
 4. Consider creating symbolic links for missing libraries (e.g., libcblas.3.dylib)
 
-#### GSL BVP Support Warning
-You may see:
+#### Build Messages
+During compilation, you may see:
 ```
 GSL BVP support not detected - solver will use fallback implementation
 ```
-This is normal - the solver includes a robust fallback implementation that doesn't require GSL BVP headers.
+This is normal and can be ignored - the solver uses the IVP+shooting method which doesn't require BVP functionality.
 
 ### Cleaning Build Artifacts
 
