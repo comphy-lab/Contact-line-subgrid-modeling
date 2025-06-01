@@ -90,7 +90,7 @@ void test_f_combined() {
 void test_gle_system() {
     printf("Testing gle_system...\n");
     
-    double s = 0.5 * 4e-4;  // S_MAX
+    double s = 0.5 * S_MAX;  // Middle of the domain
     double y[3];
     double dyds[3];
     

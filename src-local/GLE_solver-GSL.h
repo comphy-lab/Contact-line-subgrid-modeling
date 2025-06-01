@@ -17,6 +17,15 @@
 #include <gsl/gsl_roots.h>
 #include <gsl/gsl_errno.h>
 
+// Physical parameters matching Python implementation
+#define CA 1.0              // Capillary number
+#define LAMBDA_SLIP 1e-5    // Slip length
+#define MU_R 1e-3           // Viscosity ratio mu_g/mu_l
+#define THETA0 (M_PI/6.0)   // Initial contact angle (30 degrees)
+#define W_BOUNDARY 0.0      // Curvature at outer boundary
+#define DELTA 1e-4          // Minimum grid cell size
+#define S_MAX (4.0*DELTA)   // Maximum arc length
+
 // Physical parameters structure for shooting method
 typedef struct {
     double Ca;           // Capillary number
