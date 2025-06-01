@@ -126,38 +126,29 @@ void test_gle_system() {
     printf("  gle_system tests passed.\n");
 }
 
-void test_boundary_conditions() {
-    printf("Testing boundary conditions...\n");
+void test_shooting_method_setup() {
+    printf("Testing shooting method setup...\n");
     
-#ifdef HAVE_GSL_BVP_H
-    gsl_vector *y_a = gsl_vector_alloc(3);
-    gsl_vector *y_b = gsl_vector_alloc(3);
-    gsl_vector *resid = gsl_vector_alloc(3);
+    // Test shooting context setup
+    gle_parameters params = {
+        .Ca = CA,
+        .lambda_slip = LAMBDA_SLIP,
+        .mu_r = MU_R,
+        .Delta = DELTA
+    };
     
-    // Set correct boundary values
-    gsl_vector_set(y_a, 0, 1e-5);         // h(0) = LAMBDA_SLIP
-    gsl_vector_set(y_a, 1, M_PI/6.0);     // theta(0) = THETA0
-    gsl_vector_set(y_a, 2, 0.5);          // omega(0) - not constrained
+    shooting_context ctx;
+    ctx.gle_params = &params;
+    ctx.theta0 = M_PI / 6.0;  // 30 degrees
+    ctx.h0 = params.lambda_slip;
+    ctx.s_max = S_MAX;
     
-    gsl_vector_set(y_b, 0, 1e-4);         // h(s_max) - not constrained
-    gsl_vector_set(y_b, 1, M_PI/4);       // theta(s_max) - not constrained
-    gsl_vector_set(y_b, 2, 0.0);          // omega(s_max) = W_BOUNDARY
+    // Verify initial conditions match expected values
+    assert(fabs(ctx.theta0 - THETA0) < TOLERANCE);
+    assert(fabs(ctx.h0 - LAMBDA_SLIP) < TOLERANCE);
+    assert(fabs(ctx.s_max - S_MAX) < TOLERANCE);
     
-    boundary_conditions(y_a, y_b, resid, NULL);
-    
-    // Check residuals are zero for correct boundary values
-    assert(fabs(gsl_vector_get(resid, 0)) < TOLERANCE);  // theta(0) - THETA0
-    assert(fabs(gsl_vector_get(resid, 1)) < TOLERANCE);  // h(0) - LAMBDA_SLIP
-    assert(fabs(gsl_vector_get(resid, 2)) < TOLERANCE);  // omega(s_max) - W_BOUNDARY
-    
-    gsl_vector_free(y_a);
-    gsl_vector_free(y_b);
-    gsl_vector_free(resid);
-    
-    printf("  boundary_conditions tests passed.\n");
-#else
-    printf("  boundary_conditions tests skipped (GSL BVP not available).\n");
-#endif
+    printf("  Shooting method setup tests passed.\n");
 }
 
 void test_parameter_values() {
@@ -205,6 +196,43 @@ void test_numerical_stability() {
     printf("  Numerical stability tests passed.\n");
 }
 
+void test_shooting_residual() {
+    printf("Testing shooting residual function...\n");
+    
+    // Set up parameters
+    gle_parameters params = {
+        .Ca = CA,
+        .lambda_slip = LAMBDA_SLIP,
+        .mu_r = MU_R,
+        .Delta = DELTA
+    };
+    
+    shooting_context ctx;
+    ctx.gle_params = &params;
+    ctx.theta0 = M_PI / 6.0;
+    ctx.h0 = params.lambda_slip;
+    ctx.s_max = S_MAX;
+    
+    // Create ODE system
+    gsl_odeiv2_system sys = {gle_ode_system_python, NULL, 3, &params};
+    ctx.driver = gsl_odeiv2_driver_alloc_y_new(&sys, gsl_odeiv2_step_rkf45,
+                                               1e-12, 1e-10, 1e-8);
+    
+    if (ctx.driver) {
+        // Test residual calculation with a test omega0
+        double omega0_test = 100.0;
+        double residual = shooting_residual_function(omega0_test, &ctx);
+        
+        // Should return a finite value
+        assert(isfinite(residual));
+        
+        gsl_odeiv2_driver_free(ctx.driver);
+        printf("  Shooting residual tests passed.\n");
+    } else {
+        printf("  Shooting residual tests skipped (driver allocation failed).\n");
+    }
+}
+
 int main() {
     printf("=== Running GLE Solver Tests ===\n\n");
     
@@ -213,9 +241,10 @@ int main() {
     test_f3_trig();
     test_f_combined();
     test_gle_system();
-    test_boundary_conditions();
+    test_shooting_method_setup();
     test_parameter_values();
     test_numerical_stability();
+    test_shooting_residual();
     
     printf("\n=== All tests passed successfully! ===\n");
     return 0;

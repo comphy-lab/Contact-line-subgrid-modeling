@@ -31,10 +31,6 @@
 #include <gsl/gsl_odeiv2.h>
 #include <gsl/gsl_roots.h>
 
-#ifdef HAVE_GSL_BVP_H
-#include <gsl/gsl_bvp.h>
-#endif
-
 #include "src-local/GLE_solver-GSL.h"
 
 // Physical parameters are now defined in the header file
@@ -124,155 +120,11 @@ int gle_system(double s, const double y[], double dyds[], void *params) {
     return GSL_SUCCESS;
 }
 
-#ifdef HAVE_GSL_BVP_H
-// Boundary conditions matching Python implementation
-void boundary_conditions(const gsl_vector *y_a, const gsl_vector *y_b,
-                        gsl_vector *resid, void *params) {
-    (void)params;
-
-    // y_a: values at s=0
-    // y_b: values at s=s_max
-
-    double h_a = gsl_vector_get(y_a, 0);
-    double theta_a = gsl_vector_get(y_a, 1);
-    double omega_b = gsl_vector_get(y_b, 2);
-
-    // BC1: theta(0) = pi/6
-    gsl_vector_set(resid, 0, theta_a - THETA0);
-
-    // BC2: h(0) = lambda_slip
-    gsl_vector_set(resid, 1, h_a - LAMBDA_SLIP);
-
-    // BC3: omega(s_max) = w
-    gsl_vector_set(resid, 2, omega_b - W_BOUNDARY);
-}
-
-// BVP solver with file output
-int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
-    const size_t num_components = 3;
-
-    // Allocate workspace
-    gsl_bvp_workspace *bvp_ws = gsl_bvp_alloc(num_components, num_nodes);
-    if (!bvp_ws) {
-        fprintf(stderr, "Error allocating BVP workspace\n");
-        return GSL_ENOMEM;
-    }
-
-    // Allocate vectors for initial guess and solution
-    gsl_vector *y_initial = gsl_vector_alloc(num_components * num_nodes);
-    gsl_vector *solution = gsl_vector_alloc(num_components * num_nodes);
-
-    if (!y_initial || !solution) {
-        fprintf(stderr, "Error allocating vectors\n");
-        gsl_bvp_free(bvp_ws);
-        if (y_initial) gsl_vector_free(y_initial);
-        if (solution) gsl_vector_free(solution);
-        return GSL_ENOMEM;
-    }
-
-    // Set up initial guess matching Python strategy
-    for (size_t i = 0; i < num_nodes; ++i) {
-        double s_i = i * S_MAX / (double)(num_nodes - 1);
-
-        // Linear guess for h from lambda_slip to DELTA
-        double h_guess = LAMBDA_SLIP + (DELTA - LAMBDA_SLIP) * s_i / S_MAX;
-        gsl_vector_set(y_initial, i * num_components + 0, h_guess);
-
-        // Constant guess for theta at pi/6
-        gsl_vector_set(y_initial, i * num_components + 1, THETA0);
-
-        // Constant guess for omega at 0
-        gsl_vector_set(y_initial, i * num_components + 2, 0.0);
-    }
-
-    // Initialize BVP problem
-    gsl_bvp_init(bvp_ws, gle_system, boundary_conditions,
-                 y_initial, 0.0, S_MAX, NULL);
-
-    // Solve the system
-    int status = gsl_bvp_solve(bvp_ws, solution);
-
-    if (status != GSL_SUCCESS) {
-        fprintf(stderr, "BVP solver failed: %s\n", gsl_strerror(status));
-        gsl_bvp_free(bvp_ws);
-        gsl_vector_free(y_initial);
-        gsl_vector_free(solution);
-        return status;
-    }
-
-    if (verbose) {
-        printf("BVP solver converged successfully!\n");
-        // gsl_bvp_niter may not be available in all GSL versions
-        // The iteration count is typically stored in the workspace
-        // but the exact field may vary by GSL version
-        #ifdef GSL_BVP_HAS_NITER
-        printf("Number of iterations: %zu\n", gsl_bvp_niter(bvp_ws));
-        #else
-        // For compatibility, we just omit the iteration count
-        printf("Solution completed (iteration count not available)\n");
-        #endif
-    }
-
-    // Create output directory if it doesn't exist
-    struct stat st = {0};
-    if (stat("output", &st) == -1) {
-        if (mkdir("output", 0755) != 0) {
-            fprintf(stderr, "Error creating output directory: %s\n", strerror(errno));
-            gsl_bvp_free(bvp_ws);
-            gsl_vector_free(y_initial);
-            gsl_vector_free(solution);
-            return GSL_EFAILED;
-        }
-    }
-
-    // Save results to a single file
-    FILE *data_file = fopen("output/data-c-gsl.csv", "w");
-
-    if (!data_file) {
-        fprintf(stderr, "Error opening output file: %s\n", strerror(errno));
-        gsl_bvp_free(bvp_ws);
-        gsl_vector_free(y_initial);
-        gsl_vector_free(solution);
-        return GSL_EFAILED;
-    }
-
-    // Write header
-    fprintf(data_file, "s,h,theta\n");
-
-    // Write data
-    for (size_t j = 0; j < num_nodes; ++j) {
-        double s_j = j * S_MAX / (double)(num_nodes - 1);
-        double h_j = gsl_vector_get(solution, j * num_components + 0);
-        double theta_j = gsl_vector_get(solution, j * num_components + 1);
-
-        fprintf(data_file, "%.12e,%.12e,%.12e\n", s_j, h_j, theta_j);
-    }
-
-    fclose(data_file);
-
-    if (verbose) {
-        printf("Results saved to: output/data-c-gsl.csv\n");
-    }
-
-
-    // Clean up
-    gsl_bvp_free(bvp_ws);
-    gsl_vector_free(y_initial);
-    gsl_vector_free(solution);
-
-    return GSL_SUCCESS;
-}
-
-#else
-// Stub implementation when GSL BVP is not available
-int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
-    (void)num_nodes;
-    (void)verbose;
-
-    fprintf(stderr, "GSL BVP functionality not available.\n");
-    fprintf(stderr, "Using shooting method as fallback...\n");
-
-    // Fall back to shooting method
+// Main solver function using shooting method
+int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
+    (void)num_nodes;  // Not used - we use fixed number in shooting method
+    
+    // Set up parameters
     gle_parameters params = {
         .Ca = CA,
         .lambda_slip = LAMBDA_SLIP,
@@ -282,6 +134,10 @@ int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
 
     double *s_out, *h_out, *theta_out;
     int n_points;
+
+    if (verbose) {
+        printf("Using shooting method to solve GLE...\n");
+    }
 
     int status = solve_gle_shooting_method(&params, S_MAX, &s_out, &h_out, &theta_out, &n_points);
 
@@ -311,10 +167,9 @@ int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
             fclose(data_file);
 
             if (verbose) {
-                printf("Results saved to: output/data-c-gsl.csv (using shooting method)\n");
+                printf("Results saved to: output/data-c-gsl.csv\n");
             }
         }
-
 
         free(s_out);
         free(h_out);
@@ -323,9 +178,8 @@ int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
         return GSL_SUCCESS;
     }
 
-    return GSL_EUNIMPL;
+    return GSL_EFAILED;
 }
-#endif
 
 // ============================================================================
 // SHOOTING METHOD IMPLEMENTATION
@@ -822,8 +676,8 @@ int main(int argc, char *argv[]) {
     }
 
     // Run solver
-    size_t num_nodes = 100000;  // Match Python's 10000 points
-    int status = solve_gle_bvp_and_save(num_nodes, verbose);
+    size_t num_nodes = 1000;  // Number of output points
+    int status = solve_gle_shooting_and_save(num_nodes, verbose);
 
     if (status == GSL_SUCCESS) {
         printf("\nSolution successful!\n");

@@ -50,17 +50,11 @@ double f2_trig(double theta);
 double f3_trig(double theta);
 double f_combined(double theta, double mu_r);
 
-// ODE system
+// ODE system for shooting method
 int gle_system(double s, const double y[], double dyds[], void *params);
 
-// Boundary conditions (if GSL BVP is available)
-#ifdef HAVE_GSL_BVP_H
-void boundary_conditions(const gsl_vector *y_a, const gsl_vector *y_b, 
-                        gsl_vector *resid, void *params);
-#endif
-
-// Main solver function
-int solve_gle_bvp_and_save(size_t num_nodes, int verbose);
+// Main solver function using shooting method
+int solve_gle_shooting_and_save(size_t num_nodes, int verbose);
 
 // ODE system for shooting method (matching Python)
 int gle_ode_system_python(double s, const double y[], double dyds[], void *params);
