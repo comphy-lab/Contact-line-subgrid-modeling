@@ -108,7 +108,8 @@ class TestBoundaryConditions:
         """Test that boundary_conditions returns correct shape"""
         ya = [1e-5, np.pi/6, 0]  # Values at s=0
         yb = [1e-4, np.pi/4, 0]  # Values at s=Delta
-        result = boundary_conditions(ya, yb)
+        w_bc = 0  # Test boundary condition value
+        result = boundary_conditions(ya, yb, w_bc)
         assert len(result) == 3
     
     def test_boundary_conditions_satisfied(self):
@@ -116,7 +117,7 @@ class TestBoundaryConditions:
         from GLE_solver import theta0, lambda_slip, w
         ya = [lambda_slip, theta0, 0.5]  # Correct values at s=0
         yb = [1e-4, np.pi/4, w]  # Correct omega at s=Delta
-        result = boundary_conditions(ya, yb)
+        result = boundary_conditions(ya, yb, w)
         assert result[0] == pytest.approx(0)  # theta condition
         assert result[1] == pytest.approx(0)  # h condition
         assert result[2] == pytest.approx(0)  # omega condition

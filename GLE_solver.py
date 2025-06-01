@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
 import os
 import sys
+from functools import partial
 
 #Parameters
 Ca = 1.0  # Capillary number
@@ -49,14 +50,14 @@ def GLE(s, y):
 Delta = 1e-4  # Miminum grid cell size
 
 # Boundary conditions
-def boundary_conditions(ya, yb):
+def boundary_conditions(ya, yb, w_bc):
     # ya corresponds to s = 0, yb corresponds to s = 4*Delta
     h_a, theta_a, w_a = ya # boundary conditions at s = 0
     h_b, theta_b, w_b = yb # boundary conditions at s = Delta
     return [
         theta_a - theta0,      # theta(0) = pi/6, this forces theta_a to be essentially theta0. We set.
         h_a - lambda_slip,      # h(0) = lambda_slip, this forces h_a to be essentially lambda_slip. We set.
-        w_b - w         # w(Delta) = w (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w, comes from the DNS.
+        w_b - w_bc         # w(Delta) = w_bc (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w_bc, comes from the DNS.
     ]
 
 def run_solver_and_plot(GUI=False, output_dir='output'):
@@ -85,7 +86,9 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
     # Solve the ODEs
-    solution = solve_bvp(GLE, boundary_conditions, s_range_local, y_guess_local)
+    # Use partial to pass w as a parameter to boundary_conditions
+    bc_with_w = partial(boundary_conditions, w_bc=w)
+    solution = solve_bvp(GLE, bc_with_w, s_range_local, y_guess_local)
 
     # Extract the solution
     s_values_local = solution.x
@@ -94,10 +97,12 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
 
     # Plot the results with nice styling
     plt.style.use('seaborn-v0_8-darkgrid')
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
     # Define color
     solver_color = '#1f77b4'  # Blue
+    
+    # First create the combined plot
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
     # Plot h(s)
     ax1.plot(s_values_local * 1e6, h_values_local * 1e6, '-', 
@@ -134,6 +139,43 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     else:
         plt.savefig(os.path.join(output_dir, 'GLE_profiles.png'), dpi=300, bbox_inches='tight')
         plt.close()
+        
+        # Also create individual plots for h and theta as expected by tests
+        # Plot h(s) separately
+        fig1, ax1 = plt.subplots(figsize=(10, 6))
+        ax1.plot(s_values_local * 1e6, h_values_local * 1e6, '-', 
+                 color=solver_color, linewidth=2.5)
+        ax1.set_xlabel('s [μm]', fontsize=12)
+        ax1.set_ylabel('h(s) [μm]', fontsize=12)
+        ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
+        ax1.grid(True, alpha=0.3)
+        ax1.set_xlim(0, 4*Delta * 1e6)
+        
+        # Add text box with parameters
+        ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
+                 verticalalignment='top', bbox=props)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'GLE_h_profile.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Plot theta(s) separately
+        fig2, ax2 = plt.subplots(figsize=(10, 6))
+        ax2.plot(s_values_local * 1e6, theta_values_deg, '-', 
+                 color=solver_color, linewidth=2.5)
+        ax2.set_xlabel('s [μm]', fontsize=12)
+        ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
+        ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
+        ax2.grid(True, alpha=0.3)
+        ax2.set_xlim(0, 4*Delta * 1e6)
+        
+        # Add initial condition text
+        ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
+                 bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'GLE_theta_profile.png'), dpi=300, bbox_inches='tight')
+        plt.close()
 
     # Save data to CSV file
     csv_data = np.column_stack((s_values_local, h_values_local, theta_values_local))
@@ -156,7 +198,10 @@ if __name__ == "__main__":
     print(f"Number of iterations: {solution.niter}")
 
     if not gui_mode:
-        print("Plot saved to: output/GLE_profiles.png")
+        print("Plots saved to:")
+        print("  - output/GLE_profiles.png (combined)")
+        print("  - output/GLE_h_profile.png")
+        print("  - output/GLE_theta_profile.png")
 
 
 # Note: difference between this code and the ones from our [coalleauges](https://doi.org/10.1140/epjs/s11734-024-01443-5) is that we are solving for a specific control parameter whereas they use continuation method to track solution branches as parameters vary.
