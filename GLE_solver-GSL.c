@@ -287,6 +287,7 @@ int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
  * y[0] = h, y[1] = theta, y[2] = omega (dtheta/ds)
  */
 int gle_ode_system_python(double s, const double y[], double dyds[], void *params) {
+    (void)s;  // Unused parameter - required by GSL interface
     gle_parameters *p = (gle_parameters *)params;
 
     double h = y[0];
