@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <assert.h>
-#include "../../include/gle_math.h"
+#include "../../src-local/gle_math.h"
 
 /**
  * @file test_gle_math_c.c

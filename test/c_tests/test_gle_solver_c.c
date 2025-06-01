@@ -3,8 +3,8 @@
 #include <math.h>
 #include <assert.h>
 #include <string.h>
-#include "../../include/gle_solver.h"
-#include "../../include/csv_output.h"
+#include "../../src-local/gle_solver.h"
+#include "../../src-local/csv_output.h"
 
 /**
  * @file test_gle_solver_c.c

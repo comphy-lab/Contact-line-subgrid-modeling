@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "gle_solver.h"
-#include "csv_output.h"
+#include "src-local/gle_solver.h"
+#include "src-local/csv_output.h"
 
 /**
  * @file main.c

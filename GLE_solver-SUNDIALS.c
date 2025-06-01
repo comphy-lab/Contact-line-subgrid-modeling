@@ -1,5 +1,5 @@
-#include "gle_solver.h"
-#include "gle_math.h"
+#include "src-local/gle_solver.h"
+#include "src-local/gle_math.h"
 #include <cvode/cvode.h>
 #include <kinsol/kinsol.h>
 #include <sunmatrix/sunmatrix_dense.h>

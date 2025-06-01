@@ -6,6 +6,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Find required packages
 find_package(PkgConfig REQUIRED)
+
+# Prefer homebrew MPI over anaconda MPI to match SUNDIALS
+set(CMAKE_PREFIX_PATH "/opt/homebrew;${CMAKE_PREFIX_PATH}")
 find_package(MPI)
 
 # Find SUNDIALS
@@ -54,7 +57,7 @@ if(NOT SUNDIALS_INCLUDE_DIR OR NOT SUNDIALS_CVODE_LIB OR NOT SUNDIALS_KINSOL_LIB
 endif()
 
 # Include directories
-include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${CMAKE_SOURCE_DIR}/src-local)
 if(SUNDIALS_INCLUDE_DIR)
     include_directories(${SUNDIALS_INCLUDE_DIR})
 endif()
@@ -64,12 +67,12 @@ find_library(MATH_LIB m)
 
 # Source files
 set(GLE_MATH_SOURCES
-    src/gle_math.c
+    gle_math.c
 )
 
 set(GLE_SOLVER_SOURCES
-    src/GLE_solver-SUNDIALS.c
-    src/csv_output.c
+    GLE_solver-SUNDIALS.c
+    csv_output.c
 )
 
 # Create library for mathematical functions
@@ -98,8 +101,13 @@ if(SUNDIALS_CVODE_LIB AND SUNDIALS_KINSOL_LIB AND SUNDIALS_NVECSERIAL_LIB AND SU
     endif()
 
     # Create main executable
-    add_executable(gle_solver_main src/main.c)
+    add_executable(gle_solver_main main.c)
     target_link_libraries(gle_solver_main gle_solver)
+    
+    # Link MPI to main executable if MPI was found
+    if(MPI_FOUND)
+        target_link_libraries(gle_solver_main ${MPI_C_LIBRARIES})
+    endif()
 
     # Enable testing
     enable_testing()
