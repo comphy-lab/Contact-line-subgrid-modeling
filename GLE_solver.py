@@ -139,43 +139,6 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     else:
         plt.savefig(os.path.join(output_dir, 'GLE_profiles.png'), dpi=300, bbox_inches='tight')
         plt.close()
-        
-        # Also create individual plots for h and theta as expected by tests
-        # Plot h(s) separately
-        fig1, ax1 = plt.subplots(figsize=(10, 6))
-        ax1.plot(s_values_local * 1e6, h_values_local * 1e6, '-', 
-                 color=solver_color, linewidth=2.5)
-        ax1.set_xlabel('s [μm]', fontsize=12)
-        ax1.set_ylabel('h(s) [μm]', fontsize=12)
-        ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
-        ax1.grid(True, alpha=0.3)
-        ax1.set_xlim(0, 4*Delta * 1e6)
-        
-        # Add text box with parameters
-        ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
-                 verticalalignment='top', bbox=props)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, 'GLE_h_profile.png'), dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # Plot theta(s) separately
-        fig2, ax2 = plt.subplots(figsize=(10, 6))
-        ax2.plot(s_values_local * 1e6, theta_values_deg, '-', 
-                 color=solver_color, linewidth=2.5)
-        ax2.set_xlabel('s [μm]', fontsize=12)
-        ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
-        ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
-        ax2.grid(True, alpha=0.3)
-        ax2.set_xlim(0, 4*Delta * 1e6)
-        
-        # Add initial condition text
-        ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
-                 bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, 'GLE_theta_profile.png'), dpi=300, bbox_inches='tight')
-        plt.close()
 
     # Save data to CSV file
     csv_data = np.column_stack((s_values_local, h_values_local, theta_values_local))
@@ -198,10 +161,7 @@ if __name__ == "__main__":
     print(f"Number of iterations: {solution.niter}")
 
     if not gui_mode:
-        print("Plots saved to:")
-        print("  - output/GLE_profiles.png (combined)")
-        print("  - output/GLE_h_profile.png")
-        print("  - output/GLE_theta_profile.png")
+        print("Plot saved to: output/GLE_profiles.png")
 
 
 # Note: difference between this code and the ones from our [coalleauges](https://doi.org/10.1140/epjs/s11734-024-01443-5) is that we are solving for a specific control parameter whereas they use continuation method to track solution branches as parameters vary.
