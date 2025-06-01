@@ -2,9 +2,14 @@
 # Author: Claude
 # Date: 2025-05-31
 
+# Configurable paths - can be overridden externally
+# Example: make INCLUDE_PATH=/usr/local/include LIB_PATH=/usr/local/lib
+INCLUDE_PATH ?= /Users/vatsal/anaconda3/include
+LIB_PATH ?= /Users/vatsal/anaconda3/lib
+
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -g -std=c99 -Isrc-local -I/Users/vatsal/anaconda3/include
-LDFLAGS = -L/Users/vatsal/anaconda3/lib -Wl,-rpath,/Users/vatsal/anaconda3/lib -lgsl -lgslcblas -lopenblas -lm
+CFLAGS = -Wall -Wextra -O2 -g -std=c99 -Isrc-local -I$(INCLUDE_PATH)
+LDFLAGS = -L$(LIB_PATH) -Wl,-rpath,$(LIB_PATH) -lgsl -lgslcblas -lopenblas -lm
 
 # Check if GSL BVP is available
 GSL_BVP_CHECK := $(shell echo "\#include <gsl/gsl_bvp.h>" | $(CC) -E -x c - >/dev/null 2>&1 && echo "yes" || echo "no")
