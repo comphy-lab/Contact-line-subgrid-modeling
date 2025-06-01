@@ -26,10 +26,10 @@ PYTEST_EXIT_CODE=$?
 echo ""
 echo "Running C unit tests via Makefile..."
 echo "=================================="
-cd ..
+cd .. || { echo "Error: Failed to change to parent directory"; exit 1; }
 make test
 MAKE_EXIT_CODE=$?
-cd test
+cd test || { echo "Error: Failed to change back to test directory"; exit 1; }
 
 # Return non-zero if either pytest or make failed
 if [ $PYTEST_EXIT_CODE -ne 0 ] || [ $MAKE_EXIT_CODE -ne 0 ]; then
