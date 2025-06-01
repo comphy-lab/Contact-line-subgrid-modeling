@@ -3,7 +3,7 @@
  * 
  * Test suite for the GLE solver implementation
  * 
- * Author: Claude
+ * Author: Vatsal Sanjay
  * Date: 2025-05-31
  */
 

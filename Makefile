@@ -1,5 +1,4 @@
 # Makefile for the GLE solver implementation
-# Author: Claude
 # Date: 2025-05-31
 
 # Configurable paths - can be overridden externally
