@@ -14,7 +14,7 @@
  * - h(0) = lambda_slip
  * - omega(s_max) = w (curvature at outer boundary)
  *
- * Author: Claude
+ * Author: Vatsal Sanjay
  * Date: 2025-05-31
  */
 
