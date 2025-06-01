@@ -54,17 +54,16 @@ double f3_trig(double theta) {
 
 // Main f function combining the helpers
 double f_combined(double theta, double mu_r) {
-    // Handle special cases near theta = 0 and theta = pi
-    // These are based on physical considerations for contact line problems
-    if (theta < 1e-6) {
-        // Near theta = 0, return a large but finite value
-        // This represents the singularity in the contact line problem
-        return 1e4;
-    }
+    // Avoid exact boundaries where singularities occur
+    // The ODE integrator should avoid these regions
+    const double theta_min = 1e-10;
+    const double theta_max = M_PI - 1e-10;
     
-    if (M_PI - theta < 1e-6) {
-        // Near theta = pi, return a large negative value
-        return -1e4;
+    // Clamp theta to avoid singularities
+    if (theta < theta_min) {
+        theta = theta_min;
+    } else if (theta > theta_max) {
+        theta = theta_max;
     }
     
     double f1_theta = f1_trig(theta);
@@ -79,19 +78,14 @@ double f_combined(double theta, double mu_r) {
 
     // Guard against division by zero
     if (fabs(denominator) < 1e-15) {
-        // Near singularity, return a bounded value based on sign
-        return (numerator > 0) ? 1e4 : -1e4;
+        // Near singularity - this should not happen with clamped theta
+        // but if it does, return a large value based on the sign of numerator
+        // The ODE integrator will handle this by reducing step size
+        return (numerator > 0) ? 1e10 : -1e10;
     }
 
     double result = numerator / denominator;
     
-    // Clip to physically reasonable bounds to prevent numerical instabilities
-    // The maximum value is based on typical scales in contact line problems
-    const double f_max = 1e4;  // Physically motivated upper bound
-    if (fabs(result) > f_max) {
-        return (result > 0) ? f_max : -f_max;
-    }
-
     return result;
 }
 
@@ -113,8 +107,8 @@ int gle_system(double s, const double y[], double dyds[], void *params) {
     // domega/ds = 3*Ca*f(theta, mu_r)/(h*(h + 3*lambda_slip)) - cos(theta)
     double f_val = f_combined(theta, MU_R);
     
-    // Check if f_combined returned NaN (singularity)
-    if (isnan(f_val)) {
+    // Check if f_combined returned NaN or extremely large value
+    if (!isfinite(f_val) || fabs(f_val) > 1e12) {
         return GSL_EBADFUNC;
     }
     
@@ -208,7 +202,15 @@ int solve_gle_bvp_and_save(size_t num_nodes, int verbose) {
 
     if (verbose) {
         printf("BVP solver converged successfully!\n");
+        // gsl_bvp_niter may not be available in all GSL versions
+        // The iteration count is typically stored in the workspace
+        // but the exact field may vary by GSL version
+        #ifdef GSL_BVP_HAS_NITER
         printf("Number of iterations: %zu\n", gsl_bvp_niter(bvp_ws));
+        #else
+        // For compatibility, we just omit the iteration count
+        printf("Solution completed (iteration count not available)\n");
+        #endif
     }
 
     // Create output directory if it doesn't exist
@@ -361,8 +363,8 @@ int gle_ode_system_python(double s, const double y[], double dyds[], void *param
     // domega/ds = 3*Ca*f(theta,mu_r)/(h*(h + 3*lambda_slip)) - cos(theta)
     double f_val = f_combined(theta, p->mu_r);
     
-    // Check if f_combined returned NaN (singularity)
-    if (isnan(f_val)) {
+    // Check if f_combined returned NaN or extremely large value
+    if (!isfinite(f_val) || fabs(f_val) > 1e12) {
         return GSL_EDOM;
     }
     

@@ -11,6 +11,7 @@
 #ifndef GLE_SOLVER_GSL_H
 #define GLE_SOLVER_GSL_H
 
+#include <math.h>
 #include <gsl/gsl_vector.h>
 #include <gsl/gsl_multiroots.h>
 #include <gsl/gsl_odeiv2.h>
