@@ -62,7 +62,15 @@ $(BUILD_DIR)/GLE_solver-GSL-test.o: $(SRC_DIR)/GLE_solver-GSL.c $(SRC_DIR)/src-l
 	$(CC) $(CFLAGS) -DCOMPILING_TESTS -c $< -o $@
 
 test: $(TEST_EXEC)
-	./$(TEST_EXEC)
+	@echo ""
+	@echo "\033[1;36m╔══════════════════════════════════════════╗\033[0m"
+	@echo "\033[1;36m║        Running C Unit Tests              ║\033[0m"
+	@echo "\033[1;36m╚══════════════════════════════════════════╝\033[0m"
+	@echo ""
+	@./$(TEST_EXEC) || (echo "\n\033[1;31m✗ Tests failed!\033[0m" && exit 1)
+	@echo ""
+	@echo "\033[1;32m✓ All C tests passed successfully!\033[0m"
+	@echo ""
 
 run: $(SOLVER)
 	mkdir -p output

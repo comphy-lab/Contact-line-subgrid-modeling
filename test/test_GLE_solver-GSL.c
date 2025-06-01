@@ -14,11 +14,19 @@
 #include <string.h>
 #include "../src-local/GLE_solver-GSL.h"
 
+// ANSI color codes
+#define RESET   "\033[0m"
+#define GREEN   "\033[32m"
+#define YELLOW  "\033[33m"
+#define BLUE    "\033[34m"
+#define CYAN    "\033[36m"
+#define BOLD    "\033[1m"
+
 #define TOLERANCE 1e-9
 
 // Test helper functions f1, f2, f3
 void test_f1_trig() {
-    printf("Testing f1_trig...\n");
+    printf(YELLOW "Testing f1_trig..." RESET "\n");
     
     // Test at theta = 0
     assert(fabs(f1_trig(0.0) - 0.0) < TOLERANCE);
@@ -32,11 +40,11 @@ void test_f1_trig() {
     double expected = theta * theta - 1.0;  // (pi/2)^2 - sin^2(pi/2)
     assert(fabs(f1_trig(theta) - expected) < TOLERANCE);
     
-    printf("  f1_trig tests passed.\n");
+    printf(GREEN "  ✓ f1_trig tests passed." RESET "\n");
 }
 
 void test_f2_trig() {
-    printf("Testing f2_trig...\n");
+    printf(YELLOW "Testing f2_trig..." RESET "\n");
     
     // Test at theta = 0
     assert(fabs(f2_trig(0.0) - 0.0) < TOLERANCE);
@@ -48,11 +56,11 @@ void test_f2_trig() {
     double expected = M_PI / 2.0;  // pi/2 - sin(pi/2)*cos(pi/2) = pi/2 - 0
     assert(fabs(f2_trig(M_PI / 2.0) - expected) < TOLERANCE);
     
-    printf("  f2_trig tests passed.\n");
+    printf(GREEN "  ✓ f2_trig tests passed." RESET "\n");
 }
 
 void test_f3_trig() {
-    printf("Testing f3_trig...\n");
+    printf(YELLOW "Testing f3_trig..." RESET "\n");
     
     // Test at theta = 0
     assert(fabs(f3_trig(0.0) - 0.0) < TOLERANCE);
@@ -65,11 +73,11 @@ void test_f3_trig() {
     double expected = theta * (M_PI - theta) + 1.0;
     assert(fabs(f3_trig(theta) - expected) < TOLERANCE);
     
-    printf("  f3_trig tests passed.\n");
+    printf(GREEN "  ✓ f3_trig tests passed." RESET "\n");
 }
 
 void test_f_combined() {
-    printf("Testing f_combined...\n");
+    printf(YELLOW "Testing f_combined..." RESET "\n");
     
     // Test with small mu_r (matching Python default)
     double mu_r = 1e-3;
@@ -84,11 +92,11 @@ void test_f_combined() {
     result = f_combined(theta, mu_r);
     assert(isfinite(result));
     
-    printf("  f_combined tests passed.\n");
+    printf(GREEN "  ✓ f_combined tests passed." RESET "\n");
 }
 
 void test_gle_system() {
-    printf("Testing gle_system...\n");
+    printf(YELLOW "Testing gle_system..." RESET "\n");
     
     double s = 0.5 * S_MAX;  // Middle of the domain
     double y[3];
@@ -123,11 +131,11 @@ void test_gle_system() {
     assert(fabs(dyds[1] - 0.1) < TOLERANCE);
     assert(isfinite(dyds[2]));
     
-    printf("  gle_system tests passed.\n");
+    printf(GREEN "  ✓ gle_system tests passed." RESET "\n");
 }
 
 void test_shooting_method_setup() {
-    printf("Testing shooting method setup...\n");
+    printf(YELLOW "Testing shooting method setup..." RESET "\n");
     
     // Test shooting context setup
     gle_parameters params = {
@@ -148,11 +156,11 @@ void test_shooting_method_setup() {
     assert(fabs(ctx.h0 - LAMBDA_SLIP) < TOLERANCE);
     assert(fabs(ctx.s_max - S_MAX) < TOLERANCE);
     
-    printf("  Shooting method setup tests passed.\n");
+    printf(GREEN "  ✓ Shooting method setup tests passed." RESET "\n");
 }
 
 void test_parameter_values() {
-    printf("Testing parameter values match Python...\n");
+    printf(YELLOW "Testing parameter values match Python..." RESET "\n");
     
     // Create parameter structure
     gle_parameters params = {
@@ -167,11 +175,11 @@ void test_parameter_values() {
     assert(fabs(params.mu_r - 1e-3) < TOLERANCE);
     assert(fabs(params.Delta - 1e-4) < TOLERANCE);
     
-    printf("  All parameters match Python implementation.\n");
+    printf(GREEN "  ✓ All parameters match Python implementation." RESET "\n");
 }
 
 void test_numerical_stability() {
-    printf("Testing numerical stability...\n");
+    printf(YELLOW "Testing numerical stability..." RESET "\n");
     
     // Test f_combined near boundaries
     double mu_r = 1e-3;
@@ -193,11 +201,11 @@ void test_numerical_stability() {
     assert(status == GSL_SUCCESS);
     assert(isfinite(dyds[0]) && isfinite(dyds[1]) && isfinite(dyds[2]));
     
-    printf("  Numerical stability tests passed.\n");
+    printf(GREEN "  ✓ Numerical stability tests passed." RESET "\n");
 }
 
 void test_shooting_residual() {
-    printf("Testing shooting residual function...\n");
+    printf(YELLOW "Testing shooting residual function..." RESET "\n");
     
     // Set up parameters
     gle_parameters params = {
@@ -227,14 +235,16 @@ void test_shooting_residual() {
         assert(isfinite(residual));
         
         gsl_odeiv2_driver_free(ctx.driver);
-        printf("  Shooting residual tests passed.\n");
+        printf(GREEN "  ✓ Shooting residual tests passed." RESET "\n");
     } else {
-        printf("  Shooting residual tests skipped (driver allocation failed).\n");
+        printf(BLUE "  ⚠ Shooting residual tests skipped (driver allocation failed)." RESET "\n");
     }
 }
 
 int main() {
-    printf("=== Running GLE Solver Tests ===\n\n");
+    printf(BOLD CYAN "\n╔══════════════════════════════════════════╗\n");
+    printf("║      GLE Solver Unit Tests (C)          ║\n");
+    printf("╚══════════════════════════════════════════╝" RESET "\n\n");
     
     test_f1_trig();
     test_f2_trig();
@@ -246,6 +256,8 @@ int main() {
     test_numerical_stability();
     test_shooting_residual();
     
-    printf("\n=== All tests passed successfully! ===\n");
+    printf(BOLD GREEN "\n╔══════════════════════════════════════════╗\n");
+    printf("║    ✓ All tests passed successfully!      ║\n");
+    printf("╚══════════════════════════════════════════╝" RESET "\n\n");
     return 0;
 }
