@@ -64,9 +64,10 @@ static inline double shooting_residual_function(double omega0, void *params) {
     int status = integrate_ode(omega0, ctx, &h_final, &theta_final, &omega_final);
 
     if (status != GSL_SUCCESS) {
-        // Return large residual on integration failure
+        // Return signed sentinel value that preserves sign of omega0
+        // This allows Brent's solver to detect sign changes correctly
         printf("Integration failed for omega0 = %g\n", omega0);
-        return 1e10;
+        return (omega0 > 0) ? 1e10 : -1e10;
     }
 
     // We want omega(s_max) = 0
@@ -168,7 +169,7 @@ static inline int find_omega0_bracket_exponential(shooting_context *ctx, double 
  */
 static inline double gradient_descent_omega0(shooting_context *ctx, double omega0_init) {
     double omega0 = omega0_init;
-    double learning_rate = 10.0;  // Initial learning rate
+    double learning_rate = 1.0;  // Reduced initial learning rate for stability
     double epsilon = 1e-6;  // For numerical gradient
     double tolerance = 1e-8;
     int max_iter = 200;
@@ -187,16 +188,19 @@ static inline double gradient_descent_omega0(shooting_context *ctx, double omega
             return omega0;
         }
 
-        // Compute numerical gradient
+        // Compute numerical gradient using central difference for better stability
         double f_plus = shooting_residual_function(omega0 + epsilon, ctx);
-        double gradient = (f_plus - f0) / epsilon;
+        double f_minus = shooting_residual_function(omega0 - epsilon, ctx);
+        double gradient = (f_plus - f_minus) / (2.0 * epsilon);
 
         // Adaptive learning rate
         double step = -learning_rate * f0 / (fabs(gradient) + 1e-10);
 
-        // Limit step size
-        if (fabs(step) > 1000.0) {
-            step = (step > 0) ? 1000.0 : -1000.0;
+        // Scale-aware step size limit based on omega0
+        double max_step = 0.1 * fabs(omega0);
+        if (max_step < 1.0) max_step = 1.0;  // Minimum step limit
+        if (fabs(step) > max_step) {
+            step = (step > 0) ? max_step : -max_step;
         }
 
         // Update omega0
