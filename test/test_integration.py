@@ -61,23 +61,17 @@ class TestIntegration:
         if not solution.success:
             warnings.warn(f"GLE solver did not converge: {solution.message}", UserWarning)
         
-        # Check that plot files exist
-        h_plot_path = os.path.join(self.test_output_dir, 'GLE_h_profile.png')
-        theta_plot_path = os.path.join(self.test_output_dir, 'GLE_theta_profile.png')
+        # Check that combined plot file exists
+        combined_plot_path = os.path.join(self.test_output_dir, 'GLE_profiles.png')
         
-        assert os.path.exists(h_plot_path)
-        assert os.path.exists(theta_plot_path)
+        assert os.path.exists(combined_plot_path)
         
-        # Check that files have content (size > 0)
-        assert os.path.getsize(h_plot_path) > 0
-        assert os.path.getsize(theta_plot_path) > 0
+        # Check that file has content (size > 0)
+        assert os.path.getsize(combined_plot_path) > 0
         
-        # Verify PNG file headers
-        with open(h_plot_path, 'rb') as f:
-            assert f.read(8) == b'\x89PNG\r\n\x1a\n', "h_plot is not a valid PNG file"
-        
-        with open(theta_plot_path, 'rb') as f:
-            assert f.read(8) == b'\x89PNG\r\n\x1a\n', "theta_plot is not a valid PNG file"
+        # Verify PNG file header
+        with open(combined_plot_path, 'rb') as f:
+            assert f.read(8) == b'\x89PNG\r\n\x1a\n', "combined plot is not a valid PNG file"
     
     def test_huh_scriven_runs_without_error(self):
         """Test that Huh-Scriven velocity calculation runs"""
@@ -131,16 +125,13 @@ class TestIntegration:
         # Define minimum reasonable file size (1KB)
         min_size = 1024
         
-        # Check GLE plots if solver converged
+        # Check GLE combined plot if solver converged
         if solution.success:
-            h_plot_path = os.path.join(self.test_output_dir, 'GLE_h_profile.png')
-            theta_plot_path = os.path.join(self.test_output_dir, 'GLE_theta_profile.png')
+            combined_plot_path = os.path.join(self.test_output_dir, 'GLE_profiles.png')
             
-            h_size = os.path.getsize(h_plot_path)
-            theta_size = os.path.getsize(theta_plot_path)
+            combined_size = os.path.getsize(combined_plot_path)
             
-            assert h_size > min_size, f"h_plot size {h_size} bytes is too small"
-            assert theta_size > min_size, f"theta_plot size {theta_size} bytes is too small"
+            assert combined_size > min_size, f"combined plot size {combined_size} bytes is too small"
         
         # Check Huh-Scriven plots
         ux_plot_path = os.path.join(self.test_output_dir, 'huh_scriven_Ux_rel.png')
