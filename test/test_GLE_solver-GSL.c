@@ -12,7 +12,13 @@
 #include <math.h>
 #include <assert.h>
 #include <string.h>
+#include <gsl/gsl_errno.h>
 #include "../src-local/GLE_solver-GSL.h"
+
+// Define M_PI if not already defined
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // ANSI color codes
 #define RESET   "\033[0m"
