@@ -23,6 +23,14 @@
 #define NSHOTS 10       /* Number of shooting segments */
 
 /**
+ * @brief Solver method enumeration
+ */
+typedef enum {
+    GLE_SOLVER_IVP,      /* Initial value problem solver */
+    GLE_SOLVER_SHOOTING  /* Shooting method for BVP */
+} GLESolverMethod;
+
+/**
  * @brief Structure to hold GLE problem parameters
  */
 typedef struct {
@@ -33,6 +41,12 @@ typedef struct {
     double Delta;       /* Domain length */
     double w;           /* Curvature boundary condition */
     SUNContext sunctx;  /* SUNDIALS context */
+    GLESolverMethod method; /* Solver method to use */
+    double s_start;     /* Start of integration domain */
+    double s_end;       /* End of integration domain */
+    double h_init;      /* Initial value of h */
+    double theta_init;  /* Initial value of theta */
+    double omega_init;  /* Initial value of omega */
 } GLEParams;
 
 /**
@@ -42,10 +56,11 @@ typedef struct {
     double *s_values;   /* Arc length coordinates */
     double *h_values;   /* Film thickness values */
     double *theta_values; /* Contact angle values */
-    double *w_values;   /* Curvature values */
+    double *omega;      /* Curvature values (omega = dtheta/ds) */
     int n_points;       /* Number of solution points */
     int converged;      /* Convergence flag */
     int iterations;     /* Number of iterations */
+    int success;        /* Success flag */
 } GLESolution;
 
 /**
@@ -148,5 +163,25 @@ void gle_cvode_cleanup(void *cvode_mem);
  * @param solution Solution structure
  */
 void gle_print_stats(GLESolution *solution);
+
+/**
+ * @brief Solve GLE as initial value problem
+ * @param params Problem parameters
+ * @return Solution structure
+ */
+GLESolution solve_gle(GLEParams *params);
+
+/**
+ * @brief Free GLE solution memory
+ * @param solution Pointer to solution structure
+ */
+void free_gle_solution(GLESolution *solution);
+
+/**
+ * @brief Solve GLE using shooting method for BVP
+ * @param params Problem parameters
+ * @return Solution structure
+ */
+GLESolution solve_gle_shooting(GLEParams *params);
 
 #endif /* GLE_SOLVER_H */

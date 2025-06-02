@@ -69,10 +69,10 @@ GLESolution* gle_solution_alloc(int n_points) {
     solution->s_values = (double*)malloc(n_points * sizeof(double));
     solution->h_values = (double*)malloc(n_points * sizeof(double));
     solution->theta_values = (double*)malloc(n_points * sizeof(double));
-    solution->w_values = (double*)malloc(n_points * sizeof(double));
+    solution->omega = (double*)malloc(n_points * sizeof(double));
     
     if (!solution->s_values || !solution->h_values || 
-        !solution->theta_values || !solution->w_values) {
+        !solution->theta_values || !solution->omega) {
         gle_solution_free(solution);
         return NULL;
     }
@@ -90,7 +90,7 @@ void gle_solution_free(GLESolution *solution) {
     if (solution->s_values) free(solution->s_values);
     if (solution->h_values) free(solution->h_values);
     if (solution->theta_values) free(solution->theta_values);
-    if (solution->w_values) free(solution->w_values);
+    if (solution->omega) free(solution->omega);
     
     free(solution);
 }
@@ -347,7 +347,7 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
         solution->s_values[i] = 0.0;
         solution->h_values[i] = 0.0;
         solution->theta_values[i] = 0.0;
-        solution->w_values[i] = 0.0;
+        solution->omega[i] = 0.0;
     }
     
     /* Generate solution points */
@@ -360,7 +360,7 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
             /* Initial conditions */
             solution->h_values[i] = NV_Ith_S(y, 0);
             solution->theta_values[i] = NV_Ith_S(y, 1);
-            solution->w_values[i] = NV_Ith_S(y, 2);
+            solution->omega[i] = NV_Ith_S(y, 2);
             successful_points = 1;
         } else {
             /* Integrate to next point */
@@ -376,7 +376,7 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
             /* Store solution */
             solution->h_values[i] = NV_Ith_S(y, 0);
             solution->theta_values[i] = NV_Ith_S(y, 1);
-            solution->w_values[i] = NV_Ith_S(y, 2);
+            solution->omega[i] = NV_Ith_S(y, 2);
             successful_points = i + 1;
             
             /* Check for physical validity */
@@ -393,7 +393,7 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
     
     /* Check final boundary condition (simplified) */
     if (solution->n_points > 0) {
-        double final_omega = solution->w_values[solution->n_points - 1];
+        double final_omega = solution->omega[solution->n_points - 1];
         if (fabs(final_omega - params->w) > 1e-6) {
             printf("Warning: Final boundary condition not satisfied. Expected w=%g, got %g\n", 
                    params->w, final_omega);

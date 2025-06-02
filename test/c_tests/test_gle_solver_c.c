@@ -47,7 +47,7 @@ void test_gle_solution_alloc_free() {
     assert(solution->s_values != NULL);
     assert(solution->h_values != NULL);
     assert(solution->theta_values != NULL);
-    assert(solution->w_values != NULL);
+    assert(solution->omega != NULL);
     assert(solution->n_points == n_points);
     assert(solution->converged == 0);
     assert(solution->iterations == 0);
@@ -167,7 +167,7 @@ void test_gle_solve_bvp() {
             assert(solution->theta_values[i] > 0);
             assert(solution->theta_values[i] < PI);
             assert(isfinite(solution->s_values[i]));
-            assert(isfinite(solution->w_values[i]));
+            assert(isfinite(solution->omega[i]));
         }
         
         /* Check that h increases with s (since dh/ds = sin(theta) > 0) */
@@ -193,7 +193,7 @@ void test_csv_output() {
         solution->s_values[i] = (double)i * 0.1;
         solution->h_values[i] = 1e-5 + (double)i * 1e-6;
         solution->theta_values[i] = PI/6.0 + (double)i * 0.01;
-        solution->w_values[i] = (double)i * 0.001;
+        solution->omega[i] = (double)i * 0.001;
     }
     
     /* Create test output directory */

@@ -22,6 +22,7 @@ void print_usage(const char *program_name) {
     printf("  --delta VALUE       Domain length parameter (default: 1e-4)\n");
     printf("  --w VALUE           Curvature boundary condition (default: 0.0)\n");
     printf("  --points N          Number of solution points (default: 1000)\n");
+    printf("  --method METHOD     Solver method: 'shooting' or 'multishoot' (default: shooting)\n");
     printf("  --help              Show this help message\n");
 }
 
@@ -31,6 +32,7 @@ int parse_arguments(int argc, char *argv[], GLEParams *params,
     gle_params_init(params);
     strcpy(output_dir, "output");
     *n_points = 1000;
+    params->method = GLE_SOLVER_SHOOTING;  // Default to shooting method
     
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
@@ -49,11 +51,28 @@ int parse_arguments(int argc, char *argv[], GLEParams *params,
             params->w = atof(argv[++i]);
         } else if (strcmp(argv[i], "--points") == 0 && i + 1 < argc) {
             *n_points = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--method") == 0 && i + 1 < argc) {
+            i++;
+            if (strcmp(argv[i], "shooting") == 0) {
+                params->method = GLE_SOLVER_SHOOTING;
+            } else if (strcmp(argv[i], "multishoot") == 0) {
+                params->method = GLE_SOLVER_IVP;  // Existing multiple shooting
+            } else {
+                printf("Unknown method: %s\n", argv[i]);
+                return -1;
+            }
         } else {
             printf("Unknown option: %s\n", argv[i]);
             return -1;
         }
     }
+    
+    // Set up parameters for shooting method
+    params->s_start = 0.0;
+    params->s_end = 4.0 * params->Delta;
+    params->h_init = params->lambda_slip;
+    params->theta_init = params->theta0;
+    params->omega_init = 0.0;  // This will be determined by shooting
     
     return 0;
 }
@@ -97,6 +116,8 @@ int main(int argc, char *argv[]) {
     printf("  Domain length (Delta): %g\n", params.Delta);
     printf("  Curvature BC (w): %g\n", params.w);
     printf("  Solution points: %d\n", n_points);
+    printf("  Solver method: %s\n", 
+           params.method == GLE_SOLVER_SHOOTING ? "Shooting" : "Multiple Shooting");
     printf("  Output directory: %s\n", output_dir);
     
     /* Create output directory */
@@ -111,24 +132,41 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    /* Allocate solution structure */
-    GLESolution *solution = gle_solution_alloc(n_points);
-    if (!solution) {
-        printf("Error: Failed to allocate solution structure\n");
-        gle_destroy_context(&params);
-        return 1;
-    }
+    GLESolution solution;
     
     /* Solve the BVP */
-    printf("\nSolving GLE boundary value problem...\n");
-    int solve_flag = gle_solve_bvp(&params, solution);
+    if (params.method == GLE_SOLVER_SHOOTING) {
+        printf("\nSolving GLE boundary value problem using shooting method...\n");
+        solution = solve_gle_shooting(&params);
+    } else {
+        /* Allocate solution structure for multiple shooting */
+        GLESolution *solution_ptr = gle_solution_alloc(n_points);
+        if (!solution_ptr) {
+            printf("Error: Failed to allocate solution structure\n");
+            gle_destroy_context(&params);
+            return 1;
+        }
+        
+        printf("\nSolving GLE boundary value problem using multiple shooting...\n");
+        int solve_flag = gle_solve_bvp(&params, solution_ptr);
+        
+        /* Print solver statistics */
+        gle_print_stats(solution_ptr);
+        
+        if (solve_flag != 0) {
+            printf("Warning: Solver did not converge properly\n");
+            printf("Proceeding with available solution data...\n");
+        }
+        
+        // Copy to stack variable for consistent handling
+        solution = *solution_ptr;
+        free(solution_ptr);  // Just free the struct, not the arrays
+    }
     
-    /* Print solver statistics */
-    gle_print_stats(solution);
-    
-    if (solve_flag != 0) {
-        printf("Warning: Solver did not converge properly\n");
-        printf("Proceeding with available solution data...\n");
+    if (!solution.success && params.method == GLE_SOLVER_SHOOTING) {
+        printf("Error: Shooting method failed to converge\n");
+        gle_destroy_context(&params);
+        return 1;
     }
     
     /* Save results to CSV file */
@@ -141,7 +179,7 @@ int main(int argc, char *argv[]) {
     FILE *file = fopen(filename, "w");
     if (!file) {
         printf("Error: Cannot open file '%s' for writing\n", filename);
-        gle_solution_free(solution);
+        gle_solution_free(&solution);
         gle_destroy_context(&params);
         return 1;
     }
@@ -150,23 +188,23 @@ int main(int argc, char *argv[]) {
     fprintf(file, "s,h,theta\n");
     
     /* Write data rows (theta in radians) */
-    for (int i = 0; i < solution->n_points; i++) {
+    for (int i = 0; i < solution.n_points; i++) {
         fprintf(file, "%.12e,%.12e,%.12e\n", 
-                solution->s_values[i], 
-                solution->h_values[i],
-                solution->theta_values[i]);
+                solution.s_values[i], 
+                solution.h_values[i],
+                solution.theta_values[i]);
     }
     
     fclose(file);
     printf("Data saved to: %s\n", filename);
     
     /* Clean up */
-    gle_solution_free(solution);
+    free_gle_solution(&solution);
     gle_destroy_context(&params);
     
     printf("\n=== GLE Solver completed ===\n");
     
-    if (solve_flag == 0) {
+    if (solution.success) {
         printf("✅ Solution converged successfully\n");
         return 0;
     } else {

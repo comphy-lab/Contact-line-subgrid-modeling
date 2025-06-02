@@ -137,7 +137,7 @@ int save_complete_solution_csv(const char *filename, GLESolution *solution) {
                 solution->h_values[i],
                 solution->theta_values[i],
                 theta_degrees,
-                solution->w_values[i]);
+                solution->omega[i]);
     }
     
     fclose(file);

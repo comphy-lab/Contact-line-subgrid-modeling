@@ -73,6 +73,9 @@ set(GLE_MATH_SOURCES
 set(GLE_SOLVER_SOURCES
     GLE_solver-SUNDIALS.c
     csv_output.c
+    shooting_method.c
+    gradient_descent.c
+    gle_solver_wrapper.c
 )
 
 # Create library for mathematical functions
