@@ -56,6 +56,14 @@ static inline int gle_system(double s, const double y[], double dyds[], void *pa
 }
 
 /**
+ * Wrapper for gle_system to ensure visibility in test files
+ * This function provides an alternative name for testing
+ */
+static inline int gle_system_wrapper(double s, const double y[], double dyds[], void *params) {
+    return gle_system(s, y, dyds, params);
+}
+
+/**
  * ODE system for the shooting method integration
  * Includes additional checks for physical validity during integration
  * 
