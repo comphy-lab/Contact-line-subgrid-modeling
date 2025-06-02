@@ -106,8 +106,10 @@ int gle_ode_system(sunrealtype t, N_Vector y, N_Vector ydot, void *user_data) {
     
     /* Check for valid state */
     if (h <= 0 || theta <= 0 || theta >= M_PI) {
+        printf("Error in ODE: Invalid state h=%g, theta=%g\n", h, theta);
         return -1; /* Invalid state */
     }
+    
     
     /* Compute derivatives based on GLE system */
     /* dh/ds = sin(theta) */
@@ -119,15 +121,25 @@ int gle_ode_system(sunrealtype t, N_Vector y, N_Vector ydot, void *user_data) {
     /* domega/ds = 3*Ca*f(theta, mu_r)/(h*(h + 3*lambda_slip)) - cos(theta) */
     double f_val = f_combined(theta, params->mu_r);
     if (!is_finite_value(f_val)) {
+        printf("Error in ODE: f_combined returned non-finite value at theta=%g\n", theta);
         return -1; /* Invalid f value */
     }
     
     double denominator = h * (h + 3.0 * params->lambda_slip);
     if (fabs(denominator) < 1e-15) {
+        printf("Error in ODE: denominator too small: h=%g, lambda_slip=%g, denom=%g\n", 
+               h, params->lambda_slip, denominator);
         return -1; /* Division by zero */
     }
     
-    NV_Ith_S(ydot, 2) = 3.0 * params->Ca * f_val / denominator - cos(theta);
+    double domega_ds = 3.0 * params->Ca * f_val / denominator - cos(theta);
+    if (!is_finite_value(domega_ds)) {
+        printf("Error in ODE: domega/ds is non-finite: Ca=%g, f_val=%g, denom=%g, cos(theta)=%g\n",
+               params->Ca, f_val, denominator, cos(theta));
+        return -1;
+    }
+    
+    NV_Ith_S(ydot, 2) = domega_ds;
     
     return 0; /* Success */
 }
@@ -144,7 +156,21 @@ void* gle_cvode_init(GLEParams *params) {
     /* Set initial conditions */
     NV_Ith_S(y, 0) = params->lambda_slip; /* h(0) = lambda_slip */
     NV_Ith_S(y, 1) = params->theta0;      /* theta(0) = theta0 */
-    NV_Ith_S(y, 2) = 0.0;                 /* omega(0) = initial guess */
+    
+    /* Better initial guess for omega based on physical scaling */
+    /* From the ODE: domega/ds = 3*Ca*f/(h*(h+3*lambda)) - cos(theta) */
+    /* At equilibrium, domega/ds ≈ 0, so omega_init ≈ cos(theta)*h*(h+3*lambda)/(3*Ca*f) */
+    double h0 = params->lambda_slip;
+    double f_init = f_combined(params->theta0, params->mu_r);
+    double omega_guess = 0.0;
+    if (is_finite_value(f_init) && fabs(f_init) > 1e-10) {
+        omega_guess = cos(params->theta0) * h0 * (h0 + 3.0 * params->lambda_slip) / (3.0 * params->Ca * f_init);
+        /* Limit the initial guess to reasonable values */
+        if (fabs(omega_guess) > 100.0) {
+            omega_guess = (omega_guess > 0) ? 100.0 : -100.0;
+        }
+    }
+    NV_Ith_S(y, 2) = omega_guess;
     
     /* Create CVODE memory */
     cvode_mem = CVodeCreate(CV_BDF, params->sunctx);
@@ -161,8 +187,24 @@ void* gle_cvode_init(GLEParams *params) {
         return NULL;
     }
     
-    /* Set tolerances */
-    flag = CVodeSStolerances(cvode_mem, 1e-8, 1e-10);
+    /* Set tolerances - use looser tolerances for this stiff problem */
+    flag = CVodeSStolerances(cvode_mem, 1e-6, 1e-8);
+    if (flag != CV_SUCCESS) {
+        CVodeFree(&cvode_mem);
+        N_VDestroy_Serial(y);
+        return NULL;
+    }
+    
+    /* Set maximum number of steps */
+    flag = CVodeSetMaxNumSteps(cvode_mem, 50000);
+    if (flag != CV_SUCCESS) {
+        CVodeFree(&cvode_mem);
+        N_VDestroy_Serial(y);
+        return NULL;
+    }
+    
+    /* Set initial step size */
+    flag = CVodeSetInitStep(cvode_mem, 1e-10);
     if (flag != CV_SUCCESS) {
         CVodeFree(&cvode_mem);
         N_VDestroy_Serial(y);
@@ -251,8 +293,10 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
     void *cvode_mem;
     N_Vector y, ydot;
     int flag;
+    /* Match the Python implementation: s ranges from 0 to 4*Delta */
     double s_end = 4.0 * params->Delta;
     int n_points = solution->n_points;
+    
     
     /* Initialize CVODE */
     cvode_mem = gle_cvode_init(params);
@@ -272,7 +316,21 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
     /* Set initial conditions */
     NV_Ith_S(y, 0) = params->lambda_slip; /* h(0) = lambda_slip */
     NV_Ith_S(y, 1) = params->theta0;      /* theta(0) = theta0 */
-    NV_Ith_S(y, 2) = 0.0;                 /* omega(0) = initial guess */
+    
+    /* Better initial guess for omega based on physical scaling */
+    /* From the ODE: domega/ds = 3*Ca*f/(h*(h+3*lambda)) - cos(theta) */
+    /* At equilibrium, domega/ds ≈ 0, so omega_init ≈ cos(theta)*h*(h+3*lambda)/(3*Ca*f) */
+    double h0 = params->lambda_slip;
+    double f_init = f_combined(params->theta0, params->mu_r);
+    double omega_guess = 0.0;
+    if (is_finite_value(f_init) && fabs(f_init) > 1e-10) {
+        omega_guess = cos(params->theta0) * h0 * (h0 + 3.0 * params->lambda_slip) / (3.0 * params->Ca * f_init);
+        /* Limit the initial guess to reasonable values */
+        if (fabs(omega_guess) > 100.0) {
+            omega_guess = (omega_guess > 0) ? 100.0 : -100.0;
+        }
+    }
+    NV_Ith_S(y, 2) = omega_guess;
     
     /* Reinitialize CVODE with initial conditions */
     flag = CVodeReInit(cvode_mem, 0.0, y);
@@ -284,7 +342,16 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
         return -1;
     }
     
+    /* Initialize all arrays to zero first */
+    for (int i = 0; i < n_points; i++) {
+        solution->s_values[i] = 0.0;
+        solution->h_values[i] = 0.0;
+        solution->theta_values[i] = 0.0;
+        solution->w_values[i] = 0.0;
+    }
+    
     /* Generate solution points */
+    int successful_points = 0;
     for (int i = 0; i < n_points; i++) {
         double s = (double)i * s_end / (double)(n_points - 1);
         solution->s_values[i] = s;
@@ -294,6 +361,7 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
             solution->h_values[i] = NV_Ith_S(y, 0);
             solution->theta_values[i] = NV_Ith_S(y, 1);
             solution->w_values[i] = NV_Ith_S(y, 2);
+            successful_points = 1;
         } else {
             /* Integrate to next point */
             sunrealtype t_out;
@@ -301,6 +369,7 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
             if (flag < 0) {
                 printf("Warning: CVode integration failed at s=%g with flag %d\n", s, flag);
                 solution->converged = 0;
+                solution->n_points = successful_points; /* Update to actual number of points computed */
                 break;
             }
             
@@ -308,6 +377,7 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
             solution->h_values[i] = NV_Ith_S(y, 0);
             solution->theta_values[i] = NV_Ith_S(y, 1);
             solution->w_values[i] = NV_Ith_S(y, 2);
+            successful_points = i + 1;
             
             /* Check for physical validity */
             if (solution->h_values[i] <= 0 || 
@@ -315,19 +385,23 @@ int gle_solve_bvp(GLEParams *params, GLESolution *solution) {
                 solution->theta_values[i] >= M_PI) {
                 printf("Warning: Unphysical solution at s=%g\n", s);
                 solution->converged = 0;
+                solution->n_points = successful_points;
                 break;
             }
         }
     }
     
     /* Check final boundary condition (simplified) */
-    double final_omega = solution->w_values[n_points - 1];
-    if (fabs(final_omega - params->w) > 1e-6) {
-        printf("Warning: Final boundary condition not satisfied. Expected w=%g, got %g\n", 
-               params->w, final_omega);
-        solution->converged = 0;
-    } else {
-        solution->converged = 1;
+    if (solution->n_points > 0) {
+        double final_omega = solution->w_values[solution->n_points - 1];
+        if (fabs(final_omega - params->w) > 1e-6) {
+            printf("Warning: Final boundary condition not satisfied. Expected w=%g, got %g\n", 
+                   params->w, final_omega);
+            solution->converged = 0;
+        } else if (solution->n_points == n_points) {
+            /* Only mark as converged if we computed all points successfully */
+            solution->converged = 1;
+        }
     }
     
     /* Clean up */
@@ -358,4 +432,11 @@ void gle_print_stats(GLESolution *solution) {
                solution->theta_values[solution->n_points - 1] * 180.0 / M_PI);
     }
     printf("=============================\n");
+    
+    if (!solution->converged && solution->n_points > 1) {
+        printf("\nNote: This is a simplified IVP approach. The Python version uses\n");
+        printf("      solve_bvp for the full boundary value problem, which is more\n");
+        printf("      robust for this type of problem. A proper BVP solver or\n");
+        printf("      shooting method would be needed for better results.\n");
+    }
 }
