@@ -29,6 +29,22 @@ static inline int gle_system(double s, const double y[], double dyds[], void *pa
     double theta = y[1];
     double omega = y[2];
 
+    // Validate physical constraints early
+    if (h <= 0.0) {
+        // Negative or zero film thickness is physically invalid
+        return GSL_EBADFUNC;
+    }
+    
+    if (theta <= 0.0 || theta >= M_PI) {
+        // Contact angle must be between 0 and π (exclusive)
+        return GSL_EBADFUNC;
+    }
+    
+    if (!isfinite(h) || !isfinite(theta) || !isfinite(omega)) {
+        // Check for NaN or infinite values in state
+        return GSL_EBADFUNC;
+    }
+
     // dh/ds = sin(theta)
     dyds[0] = sin(theta);
 
