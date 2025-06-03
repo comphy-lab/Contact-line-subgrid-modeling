@@ -6,9 +6,9 @@ import sys
 from functools import partial
 
 #Parameters
-Ca = 1.0  # Capillary number
-lambda_slip = 1e-5  # Slip length
-mu_r = 1e-3 # \mu_g/\mu_l
+Ca = 0.0  # Capillary number
+lambda_slip = 0.002  # Slip length
+mu_r = 1e0 # \mu_g/\mu_l
 
 # Define f1, f2, and f3 functions
 def f1(theta):
@@ -28,7 +28,7 @@ def f(theta, mu_r):
 
 # Initial conditions
 h0 = lambda_slip  # h at s = 0
-theta0 = np.pi/6  # theta at s = 0
+theta0 = 0.9*np.pi/2  # theta at s = 0
 w = 0  # curvature boundary condition at s = \Delta, this needs to be not remain constant, but fed back from the DNS
 
 
@@ -47,7 +47,7 @@ def GLE(s, y):
 # The guesses follow the known BCs when solved
 # The 3rd "known" BC is the curvature at h=\Delta, which is not known, but can be fed back from the DNS
 
-Delta = 1e-4  # Miminum grid cell size
+# Delta = 4.0*lambda_slip  # Miminum grid cell size
 
 # Boundary conditions
 def boundary_conditions(ya, yb, w_bc):
@@ -56,7 +56,7 @@ def boundary_conditions(ya, yb, w_bc):
     h_b, theta_b, w_b = yb # boundary conditions at s = Delta
     return [
         theta_a - theta0,      # theta(0) = pi/6, this forces theta_a to be essentially theta0. We set.
-        h_a - lambda_slip,      # h(0) = lambda_slip, this forces h_a to be essentially lambda_slip. We set.
+        h_a - 0.0,      # h(0) = lambda_slip, this forces h_a to be essentially lambda_slip. We set.
         w_b - w_bc         # w(Delta) = w_bc (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w_bc, comes from the DNS.
     ]
 
@@ -79,9 +79,9 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     os.makedirs(output_dir, exist_ok=True)
 
     # Initial guess for the solution
-    s_range_local = np.linspace(0, 4*Delta, 100000)  # Define the range of s
+    s_range_local = np.linspace(0, 1e2, 100000)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
-    y_guess_local[0, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
+    y_guess_local[0, :] = np.linspace(lambda_slip, lambda_slip, s_range_local.size)  # Linear guess for h
     y_guess_local[1, :] = np.pi / 6  # Initial guess for theta
     y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
@@ -101,17 +101,23 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     # Define color
     solver_color = '#1f77b4'  # Blue
     
-    # First create the combined plot
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    # Create figure with 2x2 grid
+    fig = plt.figure(figsize=(15, 12))
+    gs = fig.add_gridspec(2, 2)
+    
+    # Create subplots
+    ax1 = fig.add_subplot(gs[0, 0])  # h vs s
+    ax2 = fig.add_subplot(gs[1, 0])  # theta vs s
+    ax3 = fig.add_subplot(gs[:, 1])  # theta vs h (spans both rows)
     
     # Plot h(s)
-    ax1.plot(s_values_local * 1e6, h_values_local * 1e6, '-', 
+    ax1.plot(s_values_local, h_values_local, '-', 
              color=solver_color, linewidth=2.5)
     ax1.set_xlabel('s [μm]', fontsize=12)
     ax1.set_ylabel('h(s) [μm]', fontsize=12)
     ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim(0, 4*Delta * 1e6)
+    ax1.set_xlim(0, 4)
     
     # Add text box with parameters
     textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'
@@ -120,17 +126,26 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
              verticalalignment='top', bbox=props)
     
     # Plot theta(s)
-    ax2.plot(s_values_local * 1e6, theta_values_deg, '-', 
+    ax2.plot(s_values_local, theta_values_deg, '-', 
              color=solver_color, linewidth=2.5)
     ax2.set_xlabel('s [μm]', fontsize=12)
     ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(0, 4*Delta * 1e6)
+    ax2.set_xlim(0, 4)
     
     # Add initial condition text
     ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
              bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+    
+    # Plot theta vs h
+    ax3.plot(h_values_local, theta_values_deg, '-',
+             color=solver_color, linewidth=2.5)
+    ax3.set_xlabel('h(s) [μm]', fontsize=12)
+    ax3.set_ylabel('θ(s) [degrees]', fontsize=12)
+    ax3.set_title('Contact Angle vs Film Thickness', fontsize=14, fontweight='bold')
+    ax3.grid(True, alpha=0.3)
+    ax3.set_xlim(0, 4)
     
     plt.tight_layout()
     
