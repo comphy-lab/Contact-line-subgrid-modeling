@@ -6,9 +6,14 @@ import sys
 from functools import partial
 
 #Parameters
-Ca = 1.0  # Capillary number
-lambda_slip = 1e-5  # Slip length
+Ca = 0.0246  # Capillary number
+lambda_slip = 1e-4  # Slip length
 mu_r = 1e-3 # \mu_g/\mu_l
+theta0 = np.pi/2  # theta at s = 0
+
+# Boundary conditions
+h0 = lambda_slip  # h at s = 0
+w = 0  # curvature boundary condition at s = \Delta, this will be fed back from the DNS!
 
 # Define f1, f2, and f3 functions
 def f1(theta):
@@ -26,19 +31,12 @@ def f(theta, mu_r):
     denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) - f1(np.pi - theta) * f2(theta))
     return numerator / denominator
 
-# Initial conditions
-h0 = lambda_slip  # h at s = 0
-theta0 = np.pi/6  # theta at s = 0
-w = 0  # curvature boundary condition at s = \Delta, this needs to be not remain constant, but fed back from the DNS
-
-
-
 # Define the coupled ODEs system
 def GLE(s, y):
     h, theta, omega = y
     dh_ds = np.sin(theta) # dh/ds = sin(theta)
     dt_ds = omega # omega = dtheta/ds
-    dw_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)
+    dw_ds = - 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)
     return [dh_ds, dt_ds, dw_ds]
 
 # Set up the solver parameters
@@ -79,16 +77,16 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     os.makedirs(output_dir, exist_ok=True)
 
     # Initial guess for the solution
-    s_range_local = np.linspace(0, 4*Delta, 100000)  # Define the range of s
+    s_range_local = np.linspace(0, 10, 1000)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
-    y_guess_local[0, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
-    y_guess_local[1, :] = np.pi / 6  # Initial guess for theta
+    y_guess_local[0, :] = np.linspace(lambda_slip, 10, s_range_local.size)  # Linear guess for h
+    y_guess_local[1, :] = np.pi / 2  # Initial guess for theta
     y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
     # Solve the ODEs
     # Use partial to pass w as a parameter to boundary_conditions
     bc_with_w = partial(boundary_conditions, w_bc=w)
-    solution = solve_bvp(GLE, bc_with_w, s_range_local, y_guess_local)
+    solution = solve_bvp(GLE, bc_with_w, s_range_local, y_guess_local, max_nodes=1000000)
 
     # Extract the solution
     s_values_local = solution.x
@@ -111,7 +109,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     ax1.set_ylabel('h(s)', fontsize=12)
     ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim(0, 4*Delta)
+    ax1.set_xlim(0, 10)
     
     # Add text box with parameters
     textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'
@@ -126,7 +124,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(0, 4*Delta)
+    ax2.set_xlim(0, 10)
     
     # Add initial condition text
     ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
@@ -141,9 +139,9 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
         plt.close()
 
     # Save data to CSV file
-    csv_data = np.column_stack((s_values_local, h_values_local, theta_values_local))
+    csv_data = np.column_stack((s_values_local, h_values_local, theta_values_local, w_values_local))
     csv_path = os.path.join(output_dir, 'data-python.csv')
-    np.savetxt(csv_path, csv_data, delimiter=',', header='s,h,theta', comments='')
+    np.savetxt(csv_path, csv_data, delimiter=',', header='s,h,theta,w', comments='')
     print(f"Data saved to: {csv_path}")
 
     return solution, s_values_local, h_values_local, theta_values_local, w_values_local
