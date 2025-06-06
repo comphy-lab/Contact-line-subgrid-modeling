@@ -17,7 +17,7 @@ theta0 = np.pi/2  # theta at s = 0
 h0 = lambda_slip  # h at s = 0
 w = 0  # curvature boundary condition at s = \Delta, this will be fed back from the DNS!
 
-# Define f1, f2, and f3 functions
+# Define f1, f2, and f3 functions needed for the GLE
 def f1(theta):
     return theta**2 - np.sin(theta)**2
 
@@ -45,9 +45,9 @@ def GLE(s, y):
 """ Note:
 Set up the solver parameters:
 - Need to set the boundary conditions for the ODEs. Since we are setting them at different points, we need 3 as fixed, 3 as guesses
-- $\Theta$ at $s=0$, $h$ at $s=0$, $d\Theta/ds$ at $s=\Delta$
+- $\\Theta$ at $s=0$, $h$ at $s=0$, $d\\Theta/ds$ at $s=\\Delta$
 - The guesses follow the known BCs when solved
-- The 3rd "known" BC is the curvature at $s=\Delta$, which is not known, but can be fed back from the DNS
+- The 3rd "known" BC is the curvature at $s=\\Delta$, which is not known, but can be fed back from the DNS
 """
 
 # Boundary conditions
@@ -82,8 +82,8 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     # Initial guess for the solution
     s_range_local = np.linspace(0, Delta, 1000)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
-    y_guess_local[0, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
-    y_guess_local[1, :] = np.pi / 2  # Initial guess for theta
+    y_guess_local[0, :] = theta0  # Initial guess for theta
+    y_guess_local[1, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
     y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
     # Solve the ODEs
@@ -115,7 +115,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     ax1.set_xlim(0, 10)
     
     # Add text box with parameters
-    textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'
+    textstr = f'Ca = {Ca}\n$\\lambda_\\text{slip}$ = {lambda_slip:.0e}\n$\\mu_r$ = {mu_r:.0e}'
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
     ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
              verticalalignment='top', bbox=props)
@@ -124,7 +124,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     ax2.plot(s_values_local, theta_values_deg, '-', 
              color=solver_color, linewidth=2.5)
     ax2.set_xlabel('s', fontsize=12)
-    ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
+    ax2.set_ylabel('$\\theta(s)$ [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
     ax2.set_xlim(0, 10)
