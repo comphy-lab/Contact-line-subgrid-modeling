@@ -14,8 +14,8 @@ mu_r = 1e-6 # \mu_g/\mu_l
 
 # Boundary conditions
 theta0 = np.pi/2  # theta at s = 0
-h0 = lambda_slip  # h at s = 0
 w = 0  # curvature boundary condition at s = \Delta, this will be fed back from the DNS!
+h0 = lambda_slip  # h at s = 0
 
 # Define f1, f2, and f3 functions needed for the GLE
 def f1(theta):
