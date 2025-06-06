@@ -7,7 +7,7 @@ from functools import partial
 
 # Parameters
 
-Delta = 1e0  # Minimum dimensionless grid cell size
+Delta = 1e0  # Minimum dimensionless grid cell size (for the DNS) and the maximum s-value for the solver.
 Ca = 0.0246  # Capillary number
 lambda_slip = 1e-4  # Slip length
 mu_r = 1e-6 # \mu_g/\mu_l
