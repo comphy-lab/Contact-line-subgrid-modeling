@@ -5,13 +5,15 @@ import os
 import sys
 from functools import partial
 
-#Parameters
+# Parameters
+
+Delta = 1e-4  # Minimum dimensionless grid cell size
 Ca = 0.0246  # Capillary number
 lambda_slip = 1e-4  # Slip length
 mu_r = 1e-3 # \mu_g/\mu_l
-theta0 = np.pi/2  # theta at s = 0
 
 # Boundary conditions
+theta0 = np.pi/2  # theta at s = 0
 h0 = lambda_slip  # h at s = 0
 w = 0  # curvature boundary condition at s = \Delta, this will be fed back from the DNS!
 
@@ -39,13 +41,14 @@ def GLE(s, y):
     dw_ds = - 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)
     return [dh_ds, dt_ds, dw_ds]
 
-# Set up the solver parameters
-# Need to set the initial conditions for the ODEs. Since we are setting them at different points, we need 3 as fixed, 3 as guesses
-# \Theta at s=0, h at s=0, dTheta/ds at h=\Delta
-# The guesses follow the known BCs when solved
-# The 3rd "known" BC is the curvature at h=\Delta, which is not known, but can be fed back from the DNS
 
-Delta = 1e-4  # Minimum dimensionless grid cell size
+""" Note:
+Set up the solver parameters:
+- Need to set the boundary conditions for the ODEs. Since we are setting them at different points, we need 3 as fixed, 3 as guesses
+- $\Theta$ at $s=0$, $h$ at $s=0$, $d\Theta/ds$ at $s=\Delta$
+- The guesses follow the known BCs when solved
+- The 3rd "known" BC is the curvature at $s=\Delta$, which is not known, but can be fed back from the DNS
+"""
 
 # Boundary conditions
 def boundary_conditions(ya, yb, w_bc):
@@ -53,7 +56,7 @@ def boundary_conditions(ya, yb, w_bc):
     h_a, theta_a, w_a = ya # boundary conditions at s = 0
     h_b, theta_b, w_b = yb # boundary conditions at s = Delta
     return [
-        theta_a - theta0,      # theta(0) = pi/6, this forces theta_a to be essentially theta0. We set.
+        theta_a - theta0,      # theta(0), this forces theta_a to be essentially theta0. We set.
         h_a - lambda_slip,      # h(0) = lambda_slip, this forces h_a to be essentially lambda_slip. We set.
         w_b - w_bc         # w(Delta) = w_bc (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w_bc, comes from the DNS.
     ]
@@ -77,9 +80,9 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     os.makedirs(output_dir, exist_ok=True)
 
     # Initial guess for the solution
-    s_range_local = np.linspace(0, 10, 1000)  # Define the range of s
+    s_range_local = np.linspace(0, Delta, 1000)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
-    y_guess_local[0, :] = np.linspace(lambda_slip, 10, s_range_local.size)  # Linear guess for h
+    y_guess_local[0, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
     y_guess_local[1, :] = np.pi / 2  # Initial guess for theta
     y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
