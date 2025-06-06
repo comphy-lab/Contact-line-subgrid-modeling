@@ -47,7 +47,7 @@ def GLE(s, y):
 # The guesses follow the known BCs when solved
 # The 3rd "known" BC is the curvature at h=\Delta, which is not known, but can be fed back from the DNS
 
-Delta = 1e-4  # Miminum grid cell size
+Delta = 1e-4  # Minimum dimensionless grid cell size
 
 # Boundary conditions
 def boundary_conditions(ya, yb, w_bc):
@@ -110,8 +110,8 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     # Plot h(s)
     ax1.plot(s_values_local, h_values_local, '-', 
              color=solver_color, linewidth=2.5)
-    ax1.set_xlabel('x ', fontsize=12)
-    ax1.set_ylabel('h(s) ', fontsize=12)
+    ax1.set_xlabel('s', fontsize=12)
+    ax1.set_ylabel('h(s)', fontsize=12)
     ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     ax1.set_xlim(0, 10)
@@ -125,7 +125,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     # Plot theta(s)
     ax2.plot(s_values_local, theta_values_deg, '-', 
              color=solver_color, linewidth=2.5)
-    ax2.set_xlabel('s [μm]', fontsize=12)
+    ax2.set_xlabel('s', fontsize=12)
     ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
