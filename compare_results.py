@@ -98,16 +98,16 @@ def plot_comparison(df_python, df_c):
     c_color = '#ff7f0e'       # Orange
 
     # Plot h(s)
-    ax1.plot(df_python['s'] * 1e6, df_python['h'] * 1e6, '-', 
+    ax1.plot(df_python['s'], df_python['h'], '-', 
              color=python_color, label='Python (solve_bvp)', linewidth=2.5)
-    ax1.plot(df_c['s'] * 1e6, df_c['h'] * 1e6, '--', 
+    ax1.plot(df_c['s'], df_c['h'], '--', 
              color=c_color, label='C (GSL shooting method)', linewidth=2.5)
-    ax1.set_xlabel('s [μm]', fontsize=12)
-    ax1.set_ylabel('h(s) [μm]', fontsize=12)
+    ax1.set_xlabel('s', fontsize=12)
+    ax1.set_ylabel('h(s)', fontsize=12)
     ax1.set_title('Film Thickness Profile Comparison', fontsize=14, fontweight='bold')
     ax1.legend(loc='lower right', fontsize=11, frameon=True, shadow=True)
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim(0, 4e-4 * 1e6)
+    ax1.set_xlim(0, 4e-4)
     
     # Add text box with parameters
     textstr = f'Ca = 1.0\nλ_slip = 1e-5\nμ_r = 1e-3'
@@ -116,16 +116,16 @@ def plot_comparison(df_python, df_c):
              verticalalignment='top', bbox=props)
 
     # Plot theta(s)
-    ax2.plot(df_python['s'] * 1e6, df_python['theta_deg'], '-', 
+    ax2.plot(df_python['s'], df_python['theta_deg'], '-', 
              color=python_color, label='Python (solve_bvp)', linewidth=2.5)
-    ax2.plot(df_c['s'] * 1e6, df_c['theta_deg'], '--', 
+    ax2.plot(df_c['s'], df_c['theta_deg'], '--', 
              color=c_color, label='C (GSL shooting method)', linewidth=2.5)
-    ax2.set_xlabel('s [μm]', fontsize=12)
+    ax2.set_xlabel('s', fontsize=12)
     ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile Comparison', fontsize=14, fontweight='bold')
     ax2.legend(loc='best', fontsize=11, frameon=True, shadow=True)
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(0, 4e-4 * 1e6)
+    ax2.set_xlim(0, 4e-4)
     
     # Add initial condition text
     ax2.text(0.02, 0.05, f'θ(0) = 30°', transform=ax2.transAxes, fontsize=10,
