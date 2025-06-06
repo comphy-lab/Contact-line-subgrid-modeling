@@ -1,8 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
-import os
-import sys
 from functools import partial
 import pandas as pd
 
@@ -11,28 +9,10 @@ Ca = 1e-2  # Capillary number
 lambda_slip = 1e-7  # Slip length
 mu_r = 1e-3 # \mu_g/\mu_l
 
-# # Define f1, f2, and f3 functions
-# def f1(theta):
-#     return theta**2 - np.sin(theta)**2
-
-# def f2(theta):
-#     return theta - np.sin(theta) * np.cos(theta)
-
-# def f3(theta):
-#     return theta * (np.pi - theta) + np.sin(theta)**2
-
-# # Define f(theta, mu_r) function
-# def f(theta, mu_r):
-#     numerator = 2 * np.sin(theta)**3 * (mu_r**2 * f1(theta) + 2 * mu_r * f3(theta) + f1(np.pi - theta))
-#     denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) - f1(np.pi - theta) * f2(theta))
-#     return numerator / denominator
-
 # Initial conditions
 h0 = lambda_slip  # h at s = 0
 slope0 = 1  # theta at s = 0
 omega_bc = 0  # curvature boundary condition at s = \Delta, this needs to be not remain constant, but fed back from the DNS
-
-
 
 # Define the coupled ODEs system
 def GLE(x, y):
@@ -47,7 +27,6 @@ def GLE(x, y):
 # \Theta at s=0, h at s=0, dTheta/ds at h=\Delta
 # The guesses follow the known BCs when solved
 # The 3rd "known" BC is the curvature at h=\Delta, which is not known, but can be fed back from the DNS
-
 
 # Boundary conditions
 def boundary_conditions(ya, yb, omega_bc):
@@ -79,7 +58,7 @@ def boundary_conditions(ya, yb, omega_bc):
     # os.makedirs(output_dir, exist_ok=True)
 
     # Initial guess for the solution
-s_max = 10 # 4 microns, adjust as needed for your problem
+s_max = 10 # adjust as needed for your problem
 x_range_local = np.linspace(0, s_max, 100000)  # Define the range of s with finite values
 y_guess_local = np.zeros((3, x_range_local.size))  # Initial guess for [h, theta, w]
 y_guess_local[0, :] = np.linspace(h0, s_max, x_range_local.size)  # Linear guess for h
