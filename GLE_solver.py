@@ -7,10 +7,10 @@ from functools import partial
 
 # Parameters
 
-Delta = 1e-4  # Minimum dimensionless grid cell size
+Delta = 1e0  # Minimum dimensionless grid cell size
 Ca = 0.0246  # Capillary number
 lambda_slip = 1e-4  # Slip length
-mu_r = 1e-3 # \mu_g/\mu_l
+mu_r = 1e-6 # \mu_g/\mu_l
 
 # Boundary conditions
 theta0 = np.pi/2  # theta at s = 0
@@ -95,6 +95,10 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     s_values_local = solution.x
     h_values_local, theta_values_local, w_values_local = solution.y
     theta_values_deg = theta_values_local*180/np.pi
+    
+    # Calculate x(s) = integral of cos(theta) ds
+    x_values_local = np.zeros_like(s_values_local)
+    x_values_local[1:] = np.cumsum(np.diff(s_values_local) * np.cos(theta_values_local[:-1]))
 
     # Plot the results with nice styling
     plt.style.use('seaborn-v0_8-darkgrid')
@@ -102,36 +106,58 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     # Define color
     solver_color = '#1f77b4'  # Blue
     
-    # First create the combined plot
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    # Create 2x2 subplot grid
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 12))
     
-    # Plot h(s)
+    # Plot 1: h(s) vs s
     ax1.plot(s_values_local, h_values_local, '-', 
              color=solver_color, linewidth=2.5)
     ax1.set_xlabel('s', fontsize=12)
     ax1.set_ylabel('h(s)', fontsize=12)
     ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim(0, 10)
+    ax1.set_xlim(0, Delta)
+    ax1.set_ylim(lambda_slip, 1.01*max(h_values_local))
     
     # Add text box with parameters
-    textstr = f'Ca = {Ca}\n$\\lambda_\\text{slip}$ = {lambda_slip:.0e}\n$\\mu_r$ = {mu_r:.0e}'
+    textstr = f'Ca = {Ca}\n$\\lambda_\\text{{slip}}$ = {lambda_slip:.0e}\n$\\mu_r$ = {mu_r:.0e}'
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
     ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
              verticalalignment='top', bbox=props)
     
-    # Plot theta(s)
+    # Plot 2: theta(s) vs s
     ax2.plot(s_values_local, theta_values_deg, '-', 
              color=solver_color, linewidth=2.5)
     ax2.set_xlabel('s', fontsize=12)
     ax2.set_ylabel('$\\theta(s)$ [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(0, 10)
+    ax2.set_xlim(0, Delta)
+    ax2.set_ylim(0.99*min(theta_values_deg), 1.01*max(theta_values_deg))
     
     # Add initial condition text
     ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
              bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+    
+    # Plot 3: theta(s) vs h(s)
+    ax3.plot(h_values_local, theta_values_deg, '-', 
+             color=solver_color, linewidth=2.5)
+    ax3.set_xlabel('h(s)', fontsize=12)
+    ax3.set_ylabel('$\\theta(s)$ [degrees]', fontsize=12)
+    ax3.set_title('Contact Angle vs Film Thickness', fontsize=14, fontweight='bold')
+    ax3.grid(True, alpha=0.3)
+    ax3.set_xlim(lambda_slip, 1.01*max(h_values_local))
+    ax3.set_ylim(0.99*min(theta_values_deg), 1.01*max(theta_values_deg))
+    
+    # Plot 4: h(s) vs x(s)
+    ax4.plot(x_values_local, h_values_local, '-', 
+             color=solver_color, linewidth=2.5)
+    ax4.set_xlabel('x(s)', fontsize=12)
+    ax4.set_ylabel('h(s)', fontsize=12)
+    ax4.set_title('Film Thickness vs Horizontal Position', fontsize=14, fontweight='bold')
+    ax4.grid(True, alpha=0.3)
+    ax4.set_xlim(0, 1.01*max(x_values_local))
+    ax4.set_ylim(lambda_slip, 1.01*max(h_values_local))
     
     plt.tight_layout()
     
@@ -142,9 +168,9 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
         plt.close()
 
     # Save data to CSV file
-    csv_data = np.column_stack((s_values_local, h_values_local, theta_values_local, w_values_local))
+    csv_data = np.column_stack((s_values_local, h_values_local, theta_values_local, w_values_local, x_values_local))
     csv_path = os.path.join(output_dir, 'data-python.csv')
-    np.savetxt(csv_path, csv_data, delimiter=',', header='s,h,theta,w', comments='')
+    np.savetxt(csv_path, csv_data, delimiter=',', header='s,h,theta,w,x', comments='')
     print(f"Data saved to: {csv_path}")
 
     return solution, s_values_local, h_values_local, theta_values_local, w_values_local
