@@ -4,18 +4,15 @@ from scipy.integrate import solve_bvp
 import os
 import sys
 from functools import partial
+import argparse
 
-# Parameters
-
-Delta = 1e0  # Minimum dimensionless grid cell size (for the DNS) and the maximum s-value for the solver.
-Ca = 0.0246  # Capillary number
-lambda_slip = 1e-4  # Slip length
-mu_r = 1e-6 # \mu_g/\mu_l
-
-# Boundary conditions
-theta0 = np.pi/2  # theta at s = 0
-w = 0  # curvature boundary condition at s = \Delta, this will be fed back from the DNS!
-h0 = lambda_slip  # h at s = 0
+# Default parameters (can be overridden via command line)
+DEFAULT_DELTA = 1e0  # Minimum dimensionless grid cell size (for the DNS) and the maximum s-value for the solver.
+DEFAULT_CA = 0.0246  # Capillary number
+DEFAULT_LAMBDA_SLIP = 1e-4  # Slip length
+DEFAULT_MU_R = 1e-6  # \mu_g/\mu_l
+DEFAULT_THETA0 = np.pi/2  # theta at s = 0
+DEFAULT_W = 0  # curvature boundary condition at s = \Delta
 
 # Define f1, f2, and f3 functions needed for the GLE
 def f1(theta):
@@ -34,7 +31,7 @@ def f(theta, mu_r):
     return numerator / denominator
 
 # Define the coupled ODEs system
-def GLE(s, y):
+def GLE(s, y, Ca, mu_r, lambda_slip):
     h, theta, omega = y
     dh_ds = np.sin(theta) # dh/ds = sin(theta)
     dt_ds = omega # omega = dtheta/ds
@@ -51,8 +48,8 @@ Set up the solver parameters:
 """
 
 # Boundary conditions
-def boundary_conditions(ya, yb, w_bc):
-    # ya corresponds to s = 0, yb corresponds to s = 4*Delta
+def boundary_conditions(ya, yb, w_bc, theta0, lambda_slip):
+    # ya corresponds to s = 0, yb corresponds to s = Delta
     h_a, theta_a, w_a = ya # boundary conditions at s = 0
     h_b, theta_b, w_b = yb # boundary conditions at s = Delta
     return [
@@ -61,10 +58,16 @@ def boundary_conditions(ya, yb, w_bc):
         w_b - w_bc         # w(Delta) = w_bc (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w_bc, comes from the DNS.
     ]
 
-def run_solver_and_plot(GUI=False, output_dir='output'):
+def run_solver_and_plot(Delta, Ca, lambda_slip, mu_r, theta0, w, GUI=False, output_dir='output'):
     """Run the solver and either display or save plots
 
     Args:
+        Delta (float): Maximum s-value for the solver
+        Ca (float): Capillary number
+        lambda_slip (float): Slip length
+        mu_r (float): Viscosity ratio
+        theta0 (float): Initial contact angle
+        w (float): Curvature boundary condition at s=Delta
         GUI (bool): If True, display plots. If False, save to files.
         output_dir (str): Directory to save plots when GUI=False
 
@@ -87,9 +90,10 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
     # Solve the ODEs
-    # Use partial to pass w as a parameter to boundary_conditions
-    bc_with_w = partial(boundary_conditions, w_bc=w)
-    solution = solve_bvp(GLE, bc_with_w, s_range_local, y_guess_local, max_nodes=1000000)
+    # Use partial to pass parameters to ODE and boundary condition functions
+    GLE_with_params = partial(GLE, Ca=Ca, mu_r=mu_r, lambda_slip=lambda_slip)
+    bc_with_params = partial(boundary_conditions, w_bc=w, theta0=theta0, lambda_slip=lambda_slip)
+    solution = solve_bvp(GLE_with_params, bc_with_params, s_range_local, y_guess_local, max_nodes=1000000)
 
     # Extract the solution
     s_values_local = solution.x
@@ -177,18 +181,59 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
 
 # Main execution
 if __name__ == "__main__":
-    # Check for command line argument
-    gui_mode = False  # Default is no GUI
-    if len(sys.argv) > 1 and sys.argv[1] == '--gui':
-        gui_mode = True
-
-    solution, s_values_final, h_values_final, theta_values_final, w_values_final = run_solver_and_plot(GUI=gui_mode)
+    # Create argument parser
+    parser = argparse.ArgumentParser(description='Solve Generalized Lubrication Equations (GLE)')
+    
+    # Add arguments for parameters
+    parser.add_argument('--delta', type=float, default=DEFAULT_DELTA,
+                        help=f'Maximum s-value for the solver (default: {DEFAULT_DELTA})')
+    parser.add_argument('--ca', type=float, default=DEFAULT_CA,
+                        help=f'Capillary number (default: {DEFAULT_CA})')
+    parser.add_argument('--lambda-slip', type=float, default=DEFAULT_LAMBDA_SLIP,
+                        help=f'Slip length (default: {DEFAULT_LAMBDA_SLIP})')
+    parser.add_argument('--mu-r', type=float, default=DEFAULT_MU_R,
+                        help=f'Viscosity ratio mu_g/mu_l (default: {DEFAULT_MU_R})')
+    parser.add_argument('--theta0', type=float, default=DEFAULT_THETA0*180/np.pi,
+                        help=f'Initial contact angle in degrees (default: {DEFAULT_THETA0*180/np.pi:.0f})')
+    parser.add_argument('--w', type=float, default=DEFAULT_W,
+                        help=f'Curvature boundary condition at s=Delta (default: {DEFAULT_W})')
+    parser.add_argument('--gui', action='store_true',
+                        help='Display plots in GUI mode')
+    parser.add_argument('--output-dir', type=str, default='output',
+                        help='Output directory for plots and data (default: output)')
+    
+    # Parse arguments
+    args = parser.parse_args()
+    
+    # Convert theta0 from degrees to radians
+    theta0_rad = args.theta0 * np.pi / 180
+    
+    # Run solver with parsed parameters
+    solution, s_values_final, h_values_final, theta_values_final, w_values_final = run_solver_and_plot(
+        Delta=args.delta,
+        Ca=args.ca,
+        lambda_slip=args.lambda_slip,
+        mu_r=args.mu_r,
+        theta0=theta0_rad,
+        w=args.w,
+        GUI=args.gui,
+        output_dir=args.output_dir
+    )
 
     print(f"Solution converged: {solution.success}")
     print(f"Number of iterations: {solution.niter}")
+    
+    # Print parameters used
+    print("\nParameters used:")
+    print(f"  Delta: {args.delta}")
+    print(f"  Ca: {args.ca}")
+    print(f"  lambda_slip: {args.lambda_slip}")
+    print(f"  mu_r: {args.mu_r}")
+    print(f"  theta0: {args.theta0}° ({theta0_rad:.4f} rad)")
+    print(f"  w: {args.w}")
 
-    if not gui_mode:
-        print("Plot saved to: output/GLE_profiles.png")
+    if not args.gui:
+        print(f"\nPlot saved to: {args.output_dir}/GLE_profiles.png")
 
 
 # Note: difference between this code and the ones from our [coalleauges](https://doi.org/10.1140/epjs/s11734-024-01443-5) is that we are solving for a specific control parameter whereas they use continuation method to track solution branches as parameters vary.
