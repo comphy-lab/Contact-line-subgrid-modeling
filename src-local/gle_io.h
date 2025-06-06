@@ -39,10 +39,10 @@ static inline int create_output_directory(const char *dirname) {
 
 /**
  * Write solution data to CSV file
- * Format: s,h,theta with high precision
+ * Format: s,h,theta,w with high precision
  */
 static inline int write_solution_to_csv(const char *filename, 
-                         double *s_data, double *h_data, double *theta_data,
+                         double *s_data, double *h_data, double *theta_data, double *omega_data,
                          int n_points) {
     FILE *file = fopen(filename, "w");
     
@@ -53,12 +53,12 @@ static inline int write_solution_to_csv(const char *filename,
     }
     
     // Write header
-    fprintf(file, "s,h,theta\n");
+    fprintf(file, "s,h,theta,w\n");
     
     // Write data with high precision
     for (int i = 0; i < n_points; i++) {
-        fprintf(file, "%.12e,%.12e,%.12e\n", 
-                s_data[i], h_data[i], theta_data[i]);
+        fprintf(file, "%.12e,%.12e,%.12e,%.12e\n", 
+                s_data[i], h_data[i], theta_data[i], omega_data[i]);
     }
     
     fclose(file);
@@ -85,7 +85,7 @@ static inline int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
         .Delta = DELTA
     };
 
-    double *s_out, *h_out, *theta_out;
+    double *s_out, *h_out, *theta_out, *omega_out;
     int n_points;
 
     if (verbose) {
@@ -94,7 +94,7 @@ static inline int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
 
     // Solve the GLE system
     int status = solve_gle_shooting_method(&params, S_MAX, 
-                                         &s_out, &h_out, &theta_out, &n_points);
+                                         &s_out, &h_out, &theta_out, &omega_out, &n_points);
 
     if (status == 0) {
         // Create output directory
@@ -102,12 +102,13 @@ static inline int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
             free(s_out);
             free(h_out);
             free(theta_out);
+            free(omega_out);
             return GSL_EFAILED;
         }
 
         // Write results to CSV file
         if (write_solution_to_csv("output/data-c-gsl.csv", 
-                                 s_out, h_out, theta_out, n_points) == 0) {
+                                 s_out, h_out, theta_out, omega_out, n_points) == 0) {
             if (verbose) {
                 printf("Results saved to: output/data-c-gsl.csv\n");
             }
@@ -117,6 +118,7 @@ static inline int solve_gle_shooting_and_save(size_t num_nodes, int verbose) {
         free(s_out);
         free(h_out);
         free(theta_out);
+        free(omega_out);
 
         return GSL_SUCCESS;
     }
