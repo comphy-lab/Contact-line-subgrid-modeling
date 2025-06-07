@@ -84,10 +84,10 @@ def run_solver_and_plot(Delta, Ca, lambda_slip, mu_r, theta0, w, GUI=False, outp
 
     # Initial guess for the solution
     s_range_local = np.linspace(0, Delta, 1000)  # Define the range of s
-    y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
-    y_guess_local[0, :] = theta0  # Initial guess for theta
-    y_guess_local[1, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
-    y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
+    y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [h, theta, omega]
+    y_guess_local[0, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
+    y_guess_local[1, :] = theta0  # Initial guess for theta
+    y_guess_local[2, :] = 0          # Initial guess for omega (dTheta/ds)
 
     # Solve the ODEs
     # Use partial to pass parameters to ODE and boundary condition functions
