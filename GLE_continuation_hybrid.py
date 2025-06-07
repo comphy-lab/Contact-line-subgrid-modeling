@@ -511,19 +511,29 @@ class PseudoArclengthContinuation:
             solution.x, solution.y, tol=1e-6
         )
         
+        # Try forward difference first
         x0_plus, theta_min_plus, solution_plus = solve_bvp_for_ca(
             Ca + dCa, self.mu_r, self.lambda_slip, self.theta0, self.w_bc, self.Delta,
             solution.x, solution.y, tol=1e-6
         )
         
         if solution_plus is None:
+            # Try smaller step
             dCa = dCa / 10
             x0_plus, theta_min_plus, solution_plus = solve_bvp_for_ca(
                 Ca + dCa, self.mu_r, self.lambda_slip, self.theta0, self.w_bc, self.Delta,
                 solution.x, solution.y, tol=1e-6
             )
             if solution_plus is None:
-                return None
+                # Try backward difference if forward fails
+                dCa = -dCa
+                x0_plus, theta_min_plus, solution_plus = solve_bvp_for_ca(
+                    Ca + dCa, self.mu_r, self.lambda_slip, self.theta0, self.w_bc, self.Delta,
+                    solution.x, solution.y, tol=1e-6
+                )
+                if solution_plus is None:
+                    print(f"    compute_tangent: Failed to compute tangent at Ca = {Ca:.6f}")
+                    return None
         
         # Interpolate solution_plus to the same mesh as solution if needed
         if len(solution_plus.x) != len(solution.x):
@@ -556,13 +566,16 @@ class PseudoArclengthContinuation:
         # Compute tangent
         tangent = self.compute_tangent(Ca_old, solution_old)
         if tangent is None:
+            print(f"    predictor_corrector_step: Failed to compute tangent")
             return None
         
         dU_ds, dCa_ds = tangent
+        print(f"    Tangent computed: dCa_ds = {dCa_ds:.6f}")
         
         # Predictor step
         Ca_pred = Ca_old + ds * dCa_ds
         y_pred = solution_old.y + ds * dU_ds
+        print(f"    Predictor: Ca_pred = {Ca_pred:.6f} (from {Ca_old:.6f})")
         
         # Corrector step: Newton iterations to satisfy perpendicular constraint
         Ca = Ca_pred
@@ -578,6 +591,7 @@ class PseudoArclengthContinuation:
             )
             
             if solution_new is None:
+                print(f"    Corrector iter {iter_count+1}: BVP failed at Ca = {Ca:.6f}")
                 return None
             
             # Check perpendicular constraint
@@ -959,7 +973,14 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
     failed_steps = 0
     max_failed_steps = 10
     
+    print(f"\nStarting pseudo-arclength continuation from turning point:")
+    print(f"  Ca_turn = {Ca_turn:.6f}, x0_turn = {x0_turn:.4f}, theta_min_turn = {theta_min_turn*180/np.pi:.2f}°")
+    print(f"  Initial step size: ds = {ds:.4f}")
+    
     for step in range(max_steps):
+        if step == 0 or (step + 1) % 5 == 0:
+            print(f"\nAttempting step {step+1}...")
+        
         result = arc_cont.predictor_corrector_step(
             Ca_current, solution_current, x0_current, theta_min_current, ds
         )
@@ -968,9 +989,10 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
             # Reduce step size and try again
             failed_steps += 1
             ds = ds * 0.5
+            print(f"  Step {step+1} failed. Reducing step size to ds = {ds:.6f}")
             if abs(ds) < ds_min or failed_steps > max_failed_steps:
                 print(f"\nStopping: {'step size too small' if abs(ds) < ds_min else 'too many failed steps'}")
-                print(f"  Final step: {step}, ds = {ds:.6f}")
+                print(f"  Final step: {step}, ds = {ds:.6f}, failed_steps = {failed_steps}")
                 break
             continue
         

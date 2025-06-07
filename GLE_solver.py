@@ -413,31 +413,76 @@ def parallel_solve_multiple_ca(Ca_list: List[float], mu_r: float, lambda_slip: f
 def inverse_quadratic_interpolation(x: np.ndarray, y: np.ndarray) -> float:
     """
     Perform inverse quadratic interpolation to find x where y = 0.
-    Uses the last 3 points in the arrays.
+    Uses the last 3 points in the arrays with improved numerical stability.
     """
     # Use last 3 points
     x0, x1, x2 = x[-3], x[-2], x[-1]
     y0, y1, y2 = y[-3], y[-2], y[-1]
     
-    # Check for duplicate y values (would cause division by zero)
-    eps = 1e-15
-    if abs(y0 - y1) < eps or abs(y0 - y2) < eps or abs(y1 - y2) < eps:
-        # Fall back to linear interpolation between last two distinct points
-        if abs(y1 - y2) > eps and abs(x1 - x2) > eps:
-            # Linear interpolation to find where y = 0
+    # Scale for numerical stability
+    x_scale = max(abs(x0), abs(x1), abs(x2))
+    y_scale = max(abs(y0), abs(y1), abs(y2))
+    if x_scale < 1e-10 or y_scale < 1e-10:
+        return 0.5 * (x[-1] + x[-2])
+    
+    # Normalize values
+    x0_n, x1_n, x2_n = x0/x_scale, x1/x_scale, x2/x_scale
+    y0_n, y1_n, y2_n = y0/y_scale, y1/y_scale, y2/y_scale
+    
+    # Check for duplicate or near-duplicate y values
+    eps = 1e-10
+    y_diffs = [abs(y0_n - y1_n), abs(y0_n - y2_n), abs(y1_n - y2_n)]
+    if min(y_diffs) < eps:
+        # Fall back to linear interpolation
+        if abs(y1 - y2) > eps * y_scale and abs(x1 - x2) > eps * x_scale:
             return x2 - y2 * (x2 - x1) / (y2 - y1)
-        elif abs(y0 - y2) > eps and abs(x0 - x2) > eps:
+        elif abs(y0 - y2) > eps * y_scale and abs(x0 - x2) > eps * x_scale:
             return x2 - y2 * (x2 - x0) / (y2 - y0)
         else:
-            # All points too similar, return midpoint
             return 0.5 * (x[-1] + x[-2])
     
-    # IQI formula
-    term1 = x0 * y1 * y2 / ((y0 - y1) * (y0 - y2))
-    term2 = x1 * y0 * y2 / ((y1 - y0) * (y1 - y2))
-    term3 = x2 * y0 * y1 / ((y2 - y0) * (y2 - y1))
+    # Check condition number for stability
+    # If points are too close in x-space relative to y-variation, IQI may be unstable
+    x_range = max(abs(x0_n - x1_n), abs(x0_n - x2_n), abs(x1_n - x2_n))
+    y_range = max(y_diffs)
+    if x_range < eps or y_range / x_range > 1e6:
+        # Points too close or badly conditioned
+        # Use linear extrapolation from last two points
+        if abs(y1 - y2) > eps * y_scale:
+            return x2 - y2 * (x2 - x1) / (y2 - y1)
+        else:
+            return 0.5 * (x[-1] + x[-2])
     
-    return term1 + term2 + term3
+    # IQI formula with scaled values
+    denom1 = (y0_n - y1_n) * (y0_n - y2_n)
+    denom2 = (y1_n - y0_n) * (y1_n - y2_n)
+    denom3 = (y2_n - y0_n) * (y2_n - y1_n)
+    
+    # Additional stability check
+    if abs(denom1) < eps or abs(denom2) < eps or abs(denom3) < eps:
+        # Use linear extrapolation
+        if abs(y1 - y2) > eps * y_scale:
+            return x2 - y2 * (x2 - x1) / (y2 - y1)
+        else:
+            return 0.5 * (x[-1] + x[-2])
+    
+    term1 = x0_n * y1_n * y2_n / denom1
+    term2 = x1_n * y0_n * y2_n / denom2
+    term3 = x2_n * y0_n * y1_n / denom3
+    
+    x_interp = (term1 + term2 + term3) * x_scale
+    
+    # Sanity check: IQI should not extrapolate too far
+    x_min, x_max = min(x), max(x)
+    x_range_full = x_max - x_min
+    if x_interp < x_min - 0.5 * x_range_full or x_interp > x_max + 0.5 * x_range_full:
+        # IQI suggesting unreasonable extrapolation, use linear instead
+        if abs(y1 - y2) > eps * y_scale:
+            return x2 - y2 * (x2 - x1) / (y2 - y1)
+        else:
+            return 0.5 * (x[-1] + x[-2])
+    
+    return x_interp
 
 def hybrid_iqi_newton_refinement(Ca_good: float, Ca_fail: float, mu_r: float,
                                 lambda_slip: float, theta0: float, w_bc: float, Delta: float,
@@ -467,6 +512,8 @@ def hybrid_iqi_newton_refinement(Ca_good: float, Ca_fail: float, mu_r: float,
     # Store history of (Ca, theta_min) pairs for IQI
     history_Ca = []
     history_theta_min = []
+    failed_Ca = set()  # Track failed attempts to avoid repeating them
+    consecutive_bisection_failures = 0  # Track consecutive bisection failures
     
     # Add initial good point
     result = solve_single_ca(Ca_good, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess, tol=tolerance)
@@ -483,25 +530,110 @@ def hybrid_iqi_newton_refinement(Ca_good: float, Ca_fail: float, mu_r: float,
         if interval_width < tolerance:
             print(f"Converged to Ca_cr = {Ca_good:.{decimal_places}f} after {iter_count} iterations")
             break
+            
+        # Special handling when interval is very small but not converged
+        # This happens when Ca_critical is extremely close to Ca_good
+        if interval_width < 100 * tolerance and consecutive_bisection_failures > 5:
+            print(f"\nInterval very small ({interval_width:.2e}) with many failures.")
+            print(f"Switching to logarithmic search in tiny interval...")
+            # Try logarithmically spaced points in the tiny interval
+            n_points = 10
+            Ca_test_points = np.logspace(np.log10(Ca_good + tolerance), 
+                                        np.log10(Ca_fail), 
+                                        n_points)
+            for Ca_test in Ca_test_points:
+                if Ca_test <= Ca_good or Ca_test >= Ca_fail:
+                    continue
+                result_test = solve_single_ca(
+                    Ca_test, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess, tol=tolerance
+                )
+                if result_test.success and result_test.theta_min is not None:
+                    Ca_good = Ca_test
+                    s_range = result_test.s_range
+                    y_guess = result_test.y_guess
+                    print(f"  Found better Ca: {Ca_test:.{decimal_places}f}, θ_min = {result_test.theta_min*180/np.pi:.2f}°")
+                    history_Ca.append(Ca_test)
+                    history_theta_min.append(result_test.theta_min)
+                    consecutive_bisection_failures = 0
+                    break
+                else:
+                    Ca_fail = Ca_test
+                    failed_Ca.add(Ca_test)
         
         # Choose method based on available data and proximity to critical point
         if len(history_Ca) >= 3 and min(history_theta_min) > 0.001:
             # Use Inverse Quadratic Interpolation
-            # We want to find Ca where theta_min = 0
-            # Fit quadratic through last 3 points
-            Ca_vals = np.array(history_Ca[-3:])
-            theta_vals = np.array(history_theta_min[-3:])
+            # Select best 3 points for IQI: spread out and with small theta_min
+            if len(history_Ca) > 3:
+                # Score points based on: small theta_min and good spacing
+                scores = []
+                for i in range(len(history_Ca)):
+                    # Prefer points with smaller theta_min
+                    theta_score = 1.0 / (1.0 + history_theta_min[i])
+                    
+                    # Prefer points that are well-spaced from others
+                    spacing_score = 0.0
+                    for j in range(len(history_Ca)):
+                        if i != j:
+                            spacing_score += abs(history_Ca[i] - history_Ca[j])
+                    spacing_score /= len(history_Ca) - 1
+                    
+                    scores.append(theta_score + 0.5 * spacing_score)
+                
+                # Select top 3 points by score
+                indices = np.argsort(scores)[-3:]
+                indices.sort()  # Keep chronological order
+                Ca_vals = np.array([history_Ca[i] for i in indices])
+                theta_vals = np.array([history_theta_min[i] for i in indices])
+            else:
+                Ca_vals = np.array(history_Ca[-3:])
+                theta_vals = np.array(history_theta_min[-3:])
             
             # IQI formula to find root (where theta_min = 0)
-            Ca_new = inverse_quadratic_interpolation(Ca_vals, theta_vals)
+            Ca_iqi = inverse_quadratic_interpolation(Ca_vals, theta_vals)
+            
+            # Apply relaxation factor when close to critical point
+            if min(theta_vals) < 0.1:
+                # Use weighted average with current best estimate
+                relax_factor = 0.7  # Take 70% of IQI suggestion
+                Ca_new = relax_factor * Ca_iqi + (1 - relax_factor) * Ca_good
+            else:
+                Ca_new = Ca_iqi
             
             # Ensure Ca_new is within bounds
             Ca_new = max(Ca_good, min(Ca_fail, Ca_new))
             
-            # If IQI suggests same point as last attempt, use bisection
-            if len(history_Ca) > 0 and abs(Ca_new - history_Ca[-1]) < tolerance * 0.1:
-                Ca_new = 0.5 * (Ca_good + Ca_fail)
-                method = "Bisection (IQI stuck)"
+            # Check if IQI is making progress
+            if len(history_Ca) > 0:
+                # Check if stuck (too close to previous attempts)
+                min_dist = min(abs(Ca_new - ca) for ca in history_Ca[-3:])
+                if min_dist < tolerance * 0.1:
+                    # Use adaptive bisection step
+                    if consecutive_bisection_failures >= 3:
+                        Ca_new = Ca_good + 0.618 * (Ca_fail - Ca_good)
+                        method = "Bisection (IQI stuck, golden)"
+                    else:
+                        Ca_new = 0.5 * (Ca_good + Ca_fail)
+                        method = "Bisection (IQI stuck)"
+                # Check if oscillating (going back and forth)
+                elif len(history_Ca) >= 2 and abs(Ca_new - history_Ca[-2]) < tolerance:
+                    if consecutive_bisection_failures >= 3:
+                        Ca_new = Ca_good + 0.618 * (Ca_fail - Ca_good)
+                        method = "Bisection (IQI oscillating, golden)"
+                    else:
+                        Ca_new = 0.5 * (Ca_good + Ca_fail)
+                        method = "Bisection (IQI oscillating)"
+                # Check if suggesting a value that already failed
+                # Use tighter tolerance since we're working with 6 decimal places
+                elif any(abs(Ca_new - ca) < tolerance for ca in failed_Ca):
+                    if consecutive_bisection_failures >= 3:
+                        Ca_new = Ca_good + 0.618 * (Ca_fail - Ca_good)
+                        method = "Bisection (IQI suggesting failed, golden)"
+                    else:
+                        Ca_new = 0.5 * (Ca_good + Ca_fail)
+                        method = "Bisection (IQI suggesting failed)"
+                else:
+                    method = "IQI"
             else:
                 method = "IQI"
             
@@ -533,9 +665,20 @@ def hybrid_iqi_newton_refinement(Ca_good: float, Ca_fail: float, mu_r: float,
                 Ca_new = 0.5 * (Ca_good + Ca_fail)
                 method = "Bisection"
         else:
-            # Default to bisection
-            Ca_new = 0.5 * (Ca_good + Ca_fail)
-            method = "Bisection"
+            # Default to bisection with adaptive step size
+            if consecutive_bisection_failures >= 5:
+                # After 5 failures, use a larger step (0.8 of interval)
+                Ca_new = Ca_good + 0.8 * (Ca_fail - Ca_good)
+                method = "Bisection (aggressive)"
+            elif consecutive_bisection_failures >= 3:
+                # After 3 failures, use golden ratio instead of 0.5
+                # This explores the interval more efficiently
+                golden_ratio = 0.618
+                Ca_new = Ca_good + golden_ratio * (Ca_fail - Ca_good)
+                method = "Bisection (golden)"
+            else:
+                Ca_new = 0.5 * (Ca_good + Ca_fail)
+                method = "Bisection"
         
         # Test the new Ca value
         result_new = solve_single_ca(
@@ -558,6 +701,9 @@ def hybrid_iqi_newton_refinement(Ca_good: float, Ca_fail: float, mu_r: float,
             
             print(f"  Iteration {iter_count+1} ({method}): Ca = {Ca_new:.{decimal_places}f}, θ_min = {result_new.theta_min*180/np.pi:.2f}°")
             
+            # Reset consecutive bisection failures on success
+            consecutive_bisection_failures = 0
+            
             # Early termination if theta_min is very small
             if result_new.theta_min < 0.001:
                 print(f"θ_min < 0.001 rad, terminating early at Ca = {Ca_new:.{decimal_places}f}")
@@ -566,7 +712,70 @@ def hybrid_iqi_newton_refinement(Ca_good: float, Ca_fail: float, mu_r: float,
         else:
             # Failed - update upper bound
             Ca_fail = Ca_new
+            failed_Ca.add(Ca_new)  # Track this failed attempt
             print(f"  Iteration {iter_count+1} ({method}): Ca = {Ca_new:.{decimal_places}f} failed")
+            
+            # Track consecutive bisection failures
+            if "Bisection" in method:
+                consecutive_bisection_failures += 1
+            else:
+                consecutive_bisection_failures = 0
+                
+            # If we've had many consecutive failures, update search strategy
+            if consecutive_bisection_failures >= 10:
+                # The critical point is very close to Ca_good
+                # Instead of continuing failed bisection, restart from Ca_good
+                print(f"\n  Many consecutive failures detected. Critical Ca is very close to {Ca_good:.{decimal_places}f}")
+                print(f"  Switching to fine-grained search from last successful value...")
+                
+                # Do a very fine search starting from Ca_good
+                step_size = (Ca_fail - Ca_good) * 0.001  # Start with 0.1% of interval
+                Ca_test = Ca_good + step_size
+                
+                while Ca_test < Ca_fail and iter_count < max_iter - 1:
+                    iter_count += 1
+                    result_test = solve_single_ca(
+                        Ca_test, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess, tol=tolerance
+                    )
+                    if result_test.success and result_test.theta_min is not None:
+                        # Success - update Ca_good
+                        Ca_good = Ca_test
+                        s_range = result_test.s_range
+                        y_guess = result_test.y_guess
+                        history_Ca.append(Ca_test)
+                        history_theta_min.append(result_test.theta_min)
+                        print(f"  Iteration {iter_count+1} (fine search): Ca = {Ca_test:.{decimal_places}f}, θ_min = {result_test.theta_min*180/np.pi:.2f}°")
+                        # Try a slightly larger step
+                        step_size *= 1.5
+                    else:
+                        # Failed - this is our new upper bound
+                        Ca_fail = Ca_test
+                        failed_Ca.add(Ca_test)
+                        print(f"  Iteration {iter_count+1} (fine search): Ca = {Ca_test:.{decimal_places}f} failed")
+                        # Reduce step size
+                        step_size *= 0.5
+                        
+                    # Check if we've converged
+                    if Ca_fail - Ca_good < tolerance:
+                        print(f"  Converged to Ca_cr = {Ca_good:.{decimal_places}f}")
+                        # Report final theta_min
+                        if history_theta_min:
+                            print(f"  Final θ_min = {history_theta_min[-1]*180/np.pi:.2f}°")
+                        return Ca_good
+                        
+                    Ca_test = Ca_good + step_size
+                    
+                # After fine search, reset failure counter and continue
+                consecutive_bisection_failures = 0
+                continue  # Skip the rest of the iteration
+    
+    # Diagnostic message if we exhausted iterations
+    if iter_count == max_iter - 1:
+        print(f"\nWARNING: Reached maximum iterations ({max_iter})")
+        print(f"  Last successful Ca: {Ca_good:.{decimal_places}f}")
+        print(f"  First failing Ca: {Ca_fail:.{decimal_places}f}")
+        print(f"  Interval width: {Ca_fail - Ca_good:.2e}")
+        print(f"  The critical Ca is likely very close to {Ca_good:.{decimal_places}f}")
     
     return Ca_good
 
@@ -634,6 +843,31 @@ def find_critical_ca_lower_branch(mu_r: float, lambda_slip: float, theta0: float
             Ca_fail = Ca
             break
     
+    # Stage 1.5: If the interval is too large, do a finer search
+    if Ca_critical > 0 and Ca_fail is not None:
+        interval_ratio = Ca_fail / Ca_critical
+        if interval_ratio > 1.1:  # Interval is more than 10% wide
+            print(f"\nStage 1.5: Refining coarse interval [{Ca_critical:.6f}, {Ca_fail:.6f}]...")
+            # Do a finer search in this interval
+            n_refine = 10
+            Ca_refine = np.linspace(Ca_critical, Ca_fail, n_refine + 2)[1:-1]  # Exclude endpoints
+            for Ca in Ca_refine:
+                result = solve_single_ca(
+                    Ca, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess
+                )
+                if result.success:
+                    Ca_critical = Ca
+                    s_range = result.s_range
+                    y_guess = result.y_guess
+                    if result.theta_min < 0.1:
+                        print(f"  Better estimate: Ca = {Ca:.{get_decimal_places_from_tolerance(tolerance)}f}, " +
+                              f"θ_min = {result.theta_min*180/np.pi:.2f}°")
+                else:
+                    Ca_fail = Ca
+                    break
+            print(f"  Refined interval: [{Ca_critical:.{get_decimal_places_from_tolerance(tolerance)}f}, " +
+                  f"{Ca_fail:.{get_decimal_places_from_tolerance(tolerance)}f}]")
+    
     # Stage 2: Hybrid IQI + Newton refinement
     if Ca_critical > 0 and Ca_fail is not None:
         print("\nStage 2: Hybrid IQI + Newton-Raphson refinement...")
@@ -648,7 +882,42 @@ def find_critical_ca_lower_branch(mu_r: float, lambda_slip: float, theta0: float
     elif Ca_fail is None:
         print(f"\nNo failure found up to Ca = {Ca_coarse[-1]:.{get_decimal_places_from_tolerance(tolerance)}f}")
     
+    # Final extrapolation if we have enough data points near critical Ca
+    if len(Ca_values) >= 3 and len(theta_min_values) >= 3:
+        # Check if we're close to critical point but haven't reached θ_min = 0
+        if min(theta_min_values) > 0.01:  # θ_min still > ~0.5°
+            print(f"\nθ_min at Ca_cr = {Ca_critical:.{get_decimal_places_from_tolerance(tolerance)}f} is {min(theta_min_values)*180/np.pi:.2f}° (not at critical point)")
+            print("Attempting extrapolation to estimate true Ca_critical...")
+            
+            # Use the last few points for extrapolation
+            n_extrap = min(5, len(Ca_values))
+            Ca_extrap = np.array(Ca_values[-n_extrap:])
+            theta_extrap = np.array(theta_min_values[-n_extrap:])
+            
+            # Fit a polynomial to extrapolate where θ_min = 0
+            # Use quadratic fit for robustness
+            try:
+                coeffs = np.polyfit(theta_extrap, Ca_extrap, 2)
+                Ca_critical_extrap = np.polyval(coeffs, 0.0)
+                
+                # Sanity check - extrapolation shouldn't be too far
+                if Ca_critical < Ca_critical_extrap < Ca_critical * 1.1:
+                    print(f"Extrapolated Ca_critical ≈ {Ca_critical_extrap:.{get_decimal_places_from_tolerance(tolerance)}f}")
+                    print(f"(Note: This is an estimate based on extrapolation)")
+                else:
+                    print(f"Extrapolation gave unrealistic value ({Ca_critical_extrap:.6f}), using best found value")
+            except:
+                print("Extrapolation failed, using best found value")
+    
     print(f"\nFinal critical Ca: Ca_cr = {Ca_critical:.{get_decimal_places_from_tolerance(tolerance)}f}")
+    
+    # Add diagnostic about theta_min at critical Ca
+    if theta_min_values:
+        final_theta_min = theta_min_values[-1] if Ca_values[-1] == Ca_critical else min(theta_min_values)
+        print(f"θ_min at Ca_cr: {final_theta_min*180/np.pi:.2f}°")
+        if final_theta_min > 0.1:  # > ~5.7°
+            print("WARNING: θ_min is not close to 0°. True critical Ca may be slightly higher.")
+            print("Consider using GLE_continuation_hybrid.py for more accurate results.")
     
     return Ca_critical, Ca_values, x0_values, theta_min_values
 

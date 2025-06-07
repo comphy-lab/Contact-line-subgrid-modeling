@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repository contains Python implementations for contact line subgrid modeling, focusing on solving the Generalized Lubrication Equations (GLE) and analyzing Huh-Scriven velocity fields near moving contact lines in fluid dynamics. The project includes advanced bifurcation analysis tools to study both stable and unstable solution branches.
 
+## Recent Updates
+
+### x0 Definition (Updated)
+- x0 is now consistently defined as the x-position where θ reaches its minimum value
+- This definition is implemented in `src-local/find_x0_utils.py`
+- Both GLE_solver.py and GLE_continuation_hybrid.py import this shared utility
+- When θ_min approaches 0, we are at the critical capillary number (Ca_cr)
+
 ## Key Components
 
 ### GLE_solver.py
@@ -76,3 +84,36 @@ The system exhibits a bifurcation structure with:
 - Default parameters (Delta=10, ngrid=10000) work well for most cases
 - For very small slip lengths (<1e-6), may need to increase grid resolution
 - The hybrid solver uses parallel processing - adjust --workers based on your system
+
+## File Organization
+
+### src-local/
+Contains shared utility modules:
+- `find_x0_utils.py`: Functions for finding x0 (position at θ_min) and θ_min from solutions
+- `__init__.py`: Makes src-local a Python package
+
+### Importing from src-local
+Both solver files use:
+```python
+import sys
+sys.path.append('src-local')
+from find_x0_utils import find_x0_and_theta_min
+```
+
+## Known Issues & Debugging
+
+### Phase 2 in GLE_continuation_hybrid.py
+If Phase 2 (pseudo-arclength continuation) appears stuck:
+- The turning point is likely very close to the critical Ca
+- Solutions near the turning point are difficult to compute
+- Consider adjusting the initial step size (ds) or tolerance
+- Debug output has been added to track progress:
+  - Tangent computation status
+  - Predictor step values
+  - Corrector iteration progress
+
+### Running Large Computations
+- Both GLE_solver.py and GLE_continuation_hybrid.py can take significant time to run
+- For testing, use the test scripts in test/ folder instead of running directly
+- Monitor output for progress indicators
+- Use `--workers` flag to adjust parallel processing (default: 4 or CPU count)

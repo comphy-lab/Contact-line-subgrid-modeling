@@ -7,6 +7,8 @@ its minimum value across different Ca values.
 
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
+sys.path.append('../src-local')
 from GLE_solver import solve_single_ca
 from find_x0_utils import find_x0_from_solution, find_x0_and_theta_min
 
