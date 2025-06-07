@@ -52,9 +52,54 @@ All modules are implemented as header-only libraries with static inline function
 ## Python Implementation
 
 The Python implementation provides tools to solve the GLE and analyze related phenomena:
-- `GLE_solver.py` - Main solver using scipy's odeint
+- `GLE_solver.py` - Main solver using scipy's solve_bvp with continuation method for extreme parameter values
 - `huh_scriven_velocity.py` - Analyzes Huh-Scriven velocity fields near contact lines
 - `compare_results.py` - Compares outputs between Python and C implementations
+
+### Command-line Usage
+
+The Python solver accepts command-line parameters:
+```bash
+python GLE_solver.py --ca 0.01 --theta0 60 --delta 2.0 --lambda-slip 1e-5 --mu-r 1e-6
+```
+
+Parameters:
+- `--ca`: Capillary number (default: 0.0246)
+- `--theta0`: Initial contact angle in degrees (default: 90)
+- `--delta`: Maximum s-value for solver (default: 1.0)
+- `--lambda-slip`: Slip length (default: 1e-4)
+- `--mu-r`: Viscosity ratio μ_g/μ_l (default: 1e-6)
+- `--w`: Curvature boundary condition at s=Δ (default: 0)
+- `--ngrid-init`: Initial number of grid points (default: 10000)
+
+### Solver Details
+
+The Python solver uses `scipy.solve_bvp` with the following features:
+
+1. **Grid Resolution**: The default grid uses 10000 points to properly capture steep gradients near the contact line, especially for small slip lengths. This can be adjusted via `--ngrid-init`.
+
+2. **Critical Capillary Number**: The solver automatically detects the critical Capillary number (Ca_cr) - the maximum Ca for which a steady-state solution exists. This critical value depends on:
+   - Initial contact angle (θ₀)
+   - Slip length (λ_slip) 
+   - Viscosity ratio (μ_r)
+   
+   When the requested Ca exceeds Ca_cr:
+   - The solver finds Ca_cr using a continuation method
+   - Returns the solution at Ca_cr (not at the requested Ca)
+   - Clearly indicates in the output and plots that Ca_cr is being used
+   - The plot title and parameter box show Ca_cr with a red highlight
+
+3. **Continuation Method**: The continuation method is implemented as a modular function `find_critical_ca_continuation()`:
+   - Activated automatically when direct solve fails
+   - Starts with small Ca (0.0001) and increases logarithmically through 50 steps
+   - Keeps μ_r and λ_slip fixed during continuation
+   - Stops when convergence fails, identifying Ca_cr
+   - Returns both the solution and the actual Ca used (either target Ca or Ca_cr)
+
+4. **Convergence Tips**: For challenging parameter regimes:
+   - The default 10000 grid points usually ensures convergence for Ca < Ca_cr
+   - For very small λ_slip (< 1e-6), consider increasing --ngrid-init
+   - The critical Ca typically ranges from 0.001 to 0.1 depending on parameters
 
 ### Dependencies
 - Python 3.x
