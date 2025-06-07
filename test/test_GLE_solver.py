@@ -67,7 +67,10 @@ class TestGLESystem:
         """Test that GLE returns correct shape"""
         s = 0.5
         y = [1e-5, np.pi/6, 0.1]  # h, theta, omega
-        result = GLE(s, y)
+        Ca = 0.01
+        mu_r = 1e-6
+        lambda_slip = 1e-4
+        result = GLE(s, y, Ca, mu_r, lambda_slip)
         assert len(result) == 3
     
     def test_GLE_first_equation(self):
@@ -77,7 +80,10 @@ class TestGLESystem:
         theta = np.pi/4
         omega = 0.1
         y = [h, theta, omega]
-        result = GLE(s, y)
+        Ca = 0.01
+        mu_r = 1e-6
+        lambda_slip = 1e-4
+        result = GLE(s, y, Ca, mu_r, lambda_slip)
         assert result[0] == pytest.approx(np.sin(theta))
     
     def test_GLE_second_equation(self):
@@ -87,7 +93,10 @@ class TestGLESystem:
         theta = np.pi/4
         omega = 0.15
         y = [h, theta, omega]
-        result = GLE(s, y)
+        Ca = 0.01
+        mu_r = 1e-6
+        lambda_slip = 1e-4
+        result = GLE(s, y, Ca, mu_r, lambda_slip)
         assert result[1] == pytest.approx(omega)
     
     def test_GLE_with_zero_curvature(self):
@@ -97,8 +106,13 @@ class TestGLESystem:
         theta = np.pi/6
         omega = 0
         y = [h, theta, omega]
-        result = GLE(s, y)
+        Ca = 0.01
+        mu_r = 1e-6
+        lambda_slip = 1e-4
+        result = GLE(s, y, Ca, mu_r, lambda_slip)
         assert len(result) == 3
+        # Check that omega derivative is non-zero (due to gravity term)
+        assert result[2] != 0
         assert np.all(np.isfinite(result))
 
 class TestBoundaryConditions:
@@ -109,15 +123,19 @@ class TestBoundaryConditions:
         ya = [1e-5, np.pi/6, 0]  # Values at s=0
         yb = [1e-4, np.pi/4, 0]  # Values at s=Delta
         w_bc = 0  # Test boundary condition value
-        result = boundary_conditions(ya, yb, w_bc)
+        theta0 = np.pi/6
+        lambda_slip = 1e-5
+        result = boundary_conditions(ya, yb, w_bc, theta0, lambda_slip)
         assert len(result) == 3
     
     def test_boundary_conditions_satisfied(self):
         """Test that correct boundary values satisfy conditions"""
-        from GLE_solver import theta0, lambda_slip, w
+        theta0 = np.pi/6
+        lambda_slip = 1e-5
+        w_bc = 0
         ya = [lambda_slip, theta0, 0.5]  # Correct values at s=0
-        yb = [1e-4, np.pi/4, w]  # Correct omega at s=Delta
-        result = boundary_conditions(ya, yb, w)
+        yb = [1e-4, np.pi/4, w_bc]  # Correct omega at s=Delta
+        result = boundary_conditions(ya, yb, w_bc, theta0, lambda_slip)
         assert result[0] == pytest.approx(0)  # theta condition
         assert result[1] == pytest.approx(0)  # h condition
         assert result[2] == pytest.approx(0)  # omega condition
