@@ -5,7 +5,11 @@ Test script to debug Phase 2 (pseudo-arclength continuation) issues
 
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add parent directory to path
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(parent_dir)
+# Add src-local to path
+sys.path.append(os.path.join(parent_dir, 'src-local'))
 
 import numpy as np
 from GLE_continuation_hybrid import (

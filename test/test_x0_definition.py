@@ -8,7 +8,12 @@ its minimum value across different Ca values.
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
-sys.path.append('../src-local')
+import os
+# Add parent directory to path  
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(parent_dir)
+# Add src-local to path
+sys.path.append(os.path.join(parent_dir, 'src-local'))
 from GLE_solver import solve_single_ca
 from find_x0_utils import find_x0_from_solution, find_x0_and_theta_min
 

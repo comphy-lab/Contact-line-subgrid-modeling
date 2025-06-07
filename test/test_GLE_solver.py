@@ -1,5 +1,10 @@
 import pytest
 import numpy as np
+import sys
+import os
+# Add parent directory to path
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(parent_dir)
 from GLE_solver import f1, f2, f3, f, GLE, boundary_conditions
 
 class TestHelperFunctions:
