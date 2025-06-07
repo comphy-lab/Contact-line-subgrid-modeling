@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
-from scipy.interpolate import UnivariateSpline
+from scipy.interpolate import UnivariateSpline, interp1d
 from scipy.optimize import root_scalar
 from scipy.linalg import solve as lin_solve
 import os
@@ -11,13 +11,17 @@ from multiprocessing import Pool, cpu_count
 import time
 
 # Import the critical Ca finding function from GLE_solver
-from GLE_solver import find_critical_ca_lower_branch
+from GLE_solver import find_critical_ca_lower_branch, solve_single_ca
+# Import x0 finding utilities from src-local
+import sys
+sys.path.append('src-local')
+from find_x0_utils import find_x0_and_theta_min
 
 # Default parameters
 DEFAULT_DELTA = 10.0  # Large domain for continuation
 DEFAULT_LAMBDA_SLIP = 1e-4  # Slip length
 DEFAULT_MU_R = 1e-6  # \mu_g/\mu_l
-DEFAULT_THETA0 = np.pi/2  # theta at s = 0
+DEFAULT_THETA0 = np.pi/6  # theta at s = 0
 DEFAULT_W = 0  # curvature boundary condition at s = \Delta
 DEFAULT_NGRID = 10000  # Number of grid points
 DEFAULT_WORKERS = min(4, cpu_count())  # Number of parallel workers
@@ -50,6 +54,7 @@ def GLE(s, y, Ca, mu_r, lambda_slip):
     dw_ds = - 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)
     return [dh_ds, dt_ds, dw_ds]
 
+
 # Boundary conditions
 def boundary_conditions(ya, yb, w_bc, theta0, lambda_slip):
     h_a, theta_a, w_a = ya
@@ -59,6 +64,26 @@ def boundary_conditions(ya, yb, w_bc, theta0, lambda_slip):
         h_a - lambda_slip,
         w_b - w_bc
     ]
+
+def interpolate_solution_to_mesh(solution_from, s_to):
+    """
+    Interpolate a solution from one mesh to another.
+    
+    Args:
+        solution_from: Solution object with .x and .y attributes
+        s_to: Target mesh points
+        
+    Returns:
+        Interpolated y values on the new mesh
+    """
+    y_interp = np.zeros((3, len(s_to)))
+    for i in range(3):
+        # Use cubic interpolation for smooth results
+        f_interp = interp1d(solution_from.x, solution_from.y[i, :], 
+                          kind='cubic', bounds_error=False, 
+                          fill_value='extrapolate')
+        y_interp[i, :] = f_interp(s_to)
+    return y_interp
 
 def solve_bvp_for_ca(Ca, mu_r, lambda_slip, theta0, w_bc, Delta, s_range=None, y_guess=None, tol=1e-6):
     """
@@ -87,13 +112,8 @@ def solve_bvp_for_ca(Ca, mu_r, lambda_slip, theta0, w_bc, Delta, s_range=None, y
             if np.any(theta_vals < 0) or np.any(theta_vals > np.pi):
                 return None, None, None
             
-            min_theta_idx = np.argmin(theta_vals)
-            theta_min = theta_vals[min_theta_idx]
-            
-            # Calculate x values
-            x_vals = np.zeros_like(solution.x)
-            x_vals[1:] = np.cumsum(np.diff(solution.x) * np.cos(theta_vals[:-1]))
-            x0 = x_vals[min_theta_idx]
+            # Find x0 (position where theta is minimum) and theta_min
+            x0, theta_min, x0_idx = find_x0_and_theta_min(solution.x, theta_vals)
             
             return x0, theta_min, solution
         else:
@@ -101,15 +121,175 @@ def solve_bvp_for_ca(Ca, mu_r, lambda_slip, theta0, w_bc, Delta, s_range=None, y
     except Exception as e:
         return None, None, None
 
-def solve_for_x0_newton(x0_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, Delta, 
-                       Ca_spline=None, solution_cache=None):
+def hybrid_iqi_newton_refinement(Ca_good, Ca_fail, mu_r, lambda_slip, theta0, w_bc, Delta,
+                                s_range, y_guess, tolerance=1e-6, max_iter=30):
     """
-    Find Ca for target x0 using Newton's method with smart initial guess
+    Refine Ca_cr using hybrid Inverse Quadratic Interpolation (IQI) and Newton-Raphson method.
+    
+    This method combines:
+    - IQI for fast convergence when we have 3+ points
+    - Newton-Raphson when close to critical point (theta_min < 0.1)
+    - Bisection as fallback for robustness
+    
+    Args:
+        Ca_good: Last known good Ca
+        Ca_fail: First known failing Ca
+        tolerance: Convergence tolerance (default 1e-6)
+        max_iter: Maximum iterations
+    
+    Returns:
+        Refined critical Ca value
+    """
+    print(f"\nRefining Ca_cr between {Ca_good:.6f} and {Ca_fail:.6f}")
+    print(f"Target tolerance: {tolerance}")
+    
+    # Store history of (Ca, theta_min) pairs for IQI
+    history_Ca = []
+    history_theta_min = []
+    
+    # Add initial good point
+    x0, theta_min, solution = solve_bvp_for_ca(Ca_good, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess)
+    if theta_min is not None:
+        history_Ca.append(Ca_good)
+        history_theta_min.append(theta_min)
+        s_range = solution.x
+        y_guess = solution.y
+    
+    for iter_count in range(max_iter):
+        interval_width = Ca_fail - Ca_good
+        
+        # Check convergence
+        if interval_width < tolerance:
+            print(f"Converged to Ca_cr = {Ca_good:.6f} after {iter_count} iterations")
+            break
+        
+        # Choose method based on available data and proximity to critical point
+        if len(history_Ca) >= 3 and min(history_theta_min) > 0.001:
+            # Use Inverse Quadratic Interpolation
+            # We want to find Ca where theta_min = 0
+            # Fit quadratic through last 3 points
+            n = len(history_Ca)
+            Ca_vals = np.array(history_Ca[-3:])
+            theta_vals = np.array(history_theta_min[-3:])
+            
+            # IQI formula to find root (where theta_min = 0)
+            Ca_new = inverse_quadratic_interpolation(Ca_vals, theta_vals)
+            
+            # Ensure Ca_new is within bounds
+            Ca_new = max(Ca_good, min(Ca_fail, Ca_new))
+            
+            # If IQI suggests same point as last attempt, use bisection
+            if len(history_Ca) > 0 and abs(Ca_new - history_Ca[-1]) < tolerance * 0.1:
+                Ca_new = 0.5 * (Ca_good + Ca_fail)
+                method = "Bisection (IQI stuck)"
+            else:
+                method = "IQI"
+            
+        elif len(history_Ca) >= 1 and min(history_theta_min) < 0.1:
+            # Use Newton-Raphson when close to critical point
+            # Estimate derivative using last two points if available
+            if len(history_Ca) >= 2:
+                dtheta_dCa = (history_theta_min[-1] - history_theta_min[-2]) / (history_Ca[-1] - history_Ca[-2])
+            else:
+                # Use finite difference
+                h = 0.01 * (Ca_fail - Ca_good)
+                Ca_test = Ca_good + h
+                x0_test, theta_min_test, _ = solve_bvp_for_ca(
+                    Ca_test, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess
+                )
+                if theta_min_test is not None:
+                    dtheta_dCa = (theta_min_test - history_theta_min[-1]) / h
+                else:
+                    dtheta_dCa = None
+            
+            if dtheta_dCa is not None and abs(dtheta_dCa) > 1e-10:
+                # Newton step: Ca_new = Ca - theta_min / (dtheta_min/dCa)
+                Ca_new = history_Ca[-1] - history_theta_min[-1] / dtheta_dCa
+                # Ensure within bounds
+                Ca_new = max(Ca_good, min(Ca_fail, Ca_new))
+                method = "Newton"
+            else:
+                # Fallback to bisection
+                Ca_new = 0.5 * (Ca_good + Ca_fail)
+                method = "Bisection"
+        else:
+            # Default to bisection
+            Ca_new = 0.5 * (Ca_good + Ca_fail)
+            method = "Bisection"
+        
+        # Test the new Ca value
+        x0_new, theta_min_new, solution_new = solve_bvp_for_ca(
+            Ca_new, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess
+        )
+        
+        if theta_min_new is not None:
+            # Success - update bounds and history
+            Ca_good = Ca_new
+            s_range = solution_new.x
+            y_guess = solution_new.y
+            
+            history_Ca.append(Ca_new)
+            history_theta_min.append(theta_min_new)
+            
+            # Keep only recent history for IQI
+            if len(history_Ca) > 5:
+                history_Ca = history_Ca[-5:]
+                history_theta_min = history_theta_min[-5:]
+            
+            print(f"  Iteration {iter_count+1} ({method}): Ca = {Ca_new:.6f}, θ_min = {theta_min_new*180/np.pi:.2f}°")
+            
+            # Early termination if theta_min is very small
+            if theta_min_new < 0.001:
+                print(f"θ_min < 0.001 rad, terminating early at Ca = {Ca_new:.6f}")
+                Ca_good = Ca_new
+                break
+        else:
+            # Failed - update upper bound
+            Ca_fail = Ca_new
+            print(f"  Iteration {iter_count+1} ({method}): Ca = {Ca_new:.6f} failed")
+    
+    return Ca_good
+
+
+def inverse_quadratic_interpolation(x, y):
+    """
+    Perform inverse quadratic interpolation to find x where y = 0.
+    Uses the last 3 points in the arrays.
+    """
+    # Use last 3 points
+    x0, x1, x2 = x[-3], x[-2], x[-1]
+    y0, y1, y2 = y[-3], y[-2], y[-1]
+    
+    # Check for duplicate y values (would cause division by zero)
+    eps = 1e-15
+    if abs(y0 - y1) < eps or abs(y0 - y2) < eps or abs(y1 - y2) < eps:
+        # Fall back to linear interpolation between last two distinct points
+        if abs(y1 - y2) > eps and abs(x1 - x2) > eps:
+            # Linear interpolation to find where y = 0
+            return x2 - y2 * (x2 - x1) / (y2 - y1)
+        elif abs(y0 - y2) > eps and abs(x0 - x2) > eps:
+            return x2 - y2 * (x2 - x0) / (y2 - y0)
+        else:
+            # All points too similar, return midpoint
+            return 0.5 * (x[-1] + x[-2])
+    
+    # IQI formula
+    term1 = x0 * y1 * y2 / ((y0 - y1) * (y0 - y2))
+    term2 = x1 * y0 * y2 / ((y1 - y0) * (y1 - y2))
+    term3 = x2 * y0 * y1 / ((y2 - y0) * (y2 - y1))
+    
+    return term1 + term2 + term3
+
+
+def solve_for_theta_min_newton(theta_min_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, Delta, 
+                              Ca_spline=None, solution_cache=None):
+    """
+    Find Ca for target theta_min using Newton's method with smart initial guess
     """
     # Get initial Ca guess from spline if available
     if Ca_spline is not None:
         try:
-            Ca_init = float(Ca_spline(x0_target))
+            Ca_init = float(Ca_spline(theta_min_target))
             Ca_init = max(1e-6, min(1.0, Ca_init))
         except:
             Ca_init = Ca_guess
@@ -120,14 +300,14 @@ def solve_for_x0_newton(x0_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, De
     s_range = None
     y_guess = None
     if solution_cache is not None and len(solution_cache) > 0:
-        # Find closest x0 in cache
-        x0_cache = [item['x0'] for item in solution_cache]
-        closest_idx = np.argmin(np.abs(np.array(x0_cache) - x0_target))
+        # Find closest theta_min in cache
+        theta_min_cache = [item['theta_min'] for item in solution_cache]
+        closest_idx = np.argmin(np.abs(np.array(theta_min_cache) - theta_min_target))
         s_range = solution_cache[closest_idx]['s_range']
         y_guess = solution_cache[closest_idx]['y_solution']
     
     def objective(Ca):
-        """Return x0(Ca) - x0_target"""
+        """Return theta_min(Ca) - theta_min_target"""
         if Ca <= 0 or Ca > 1.0:
             return 1e10
         
@@ -135,8 +315,8 @@ def solve_for_x0_newton(x0_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, De
             Ca, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess
         )
         
-        if x0_computed is not None:
-            return x0_computed - x0_target
+        if theta_min is not None:
+            return theta_min - theta_min_target
         else:
             return 1e10
     
@@ -167,32 +347,32 @@ def solve_for_x0_newton(x0_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, De
             break
     
     # Get final solution
-    x0_final, theta_min, solution = solve_bvp_for_ca(
+    x0_final, theta_min_final, solution = solve_bvp_for_ca(
         Ca, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess, tol=1e-6
     )
     
-    if x0_final is not None and abs(x0_final - x0_target) < 0.01:
-        return Ca, theta_min, solution
+    if theta_min_final is not None and abs(theta_min_final - theta_min_target) < 0.001:
+        return Ca, theta_min_final, solution
     else:
         return None, None, None
 
-def worker_solve_x0(args):
+def worker_solve_theta_min(args):
     """Worker function for parallel processing with improved error handling"""
-    x0_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, Delta, Ca_spline_data = args
+    theta_min_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, Delta, Ca_spline_data = args
     
     # Reconstruct spline in worker
     if Ca_spline_data is not None:
-        x0_data, Ca_data = Ca_spline_data
+        theta_min_data, Ca_data = Ca_spline_data
         try:
-            Ca_spline = UnivariateSpline(x0_data, Ca_data, k=min(3, len(x0_data)-1), s=0)
+            Ca_spline = UnivariateSpline(theta_min_data, Ca_data, k=min(3, len(theta_min_data)-1), s=0)
         except:
             Ca_spline = None
     else:
         Ca_spline = None
     
     # Try with Newton method first
-    Ca, theta_min, solution = solve_for_x0_newton(
-        x0_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, Delta, Ca_spline
+    Ca, theta_min, solution = solve_for_theta_min_newton(
+        theta_min_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, Delta, Ca_spline
     )
     
     # If Newton fails, try bracketing method
@@ -203,10 +383,10 @@ def worker_solve_x0(args):
             Ca_upper = Ca_guess * 10.0
             
             def objective(Ca):
-                x0_comp, _, _ = solve_bvp_for_ca(
+                _, theta_min_comp, _ = solve_bvp_for_ca(
                     Ca, mu_r, lambda_slip, theta0, w_bc, Delta
                 )
-                return (x0_comp - x0_target) if x0_comp is not None else 1e10
+                return (theta_min_comp - theta_min_target) if theta_min_comp is not None else 1e10
             
             # Check if we can bracket
             f_lower = objective(Ca_lower)
@@ -222,8 +402,11 @@ def worker_solve_x0(args):
             pass
     
     if Ca is not None and solution is not None:
+        x0_computed, _, _ = solve_bvp_for_ca(
+            Ca, mu_r, lambda_slip, theta0, w_bc, Delta, solution.x, solution.y
+        )
         return {
-            'x0': x0_target,
+            'x0': x0_computed,  # Track x0 (position at theta_min) for plotting
             'Ca': Ca,
             'theta_min': theta_min,
             's_range': solution.x,
@@ -231,6 +414,80 @@ def worker_solve_x0(args):
         }
     else:
         return None
+
+
+def find_critical_ca_improved(mu_r, lambda_slip, theta0, w_bc, Delta, nGridInit=DEFAULT_NGRID, 
+                             output_dir='output', Ca_requested=1.0, tolerance=1e-6):
+    """
+    Find the critical Ca using a two-stage approach with improved refinement.
+    
+    Stage 1: Coarse logarithmic search
+    Stage 2: Hybrid IQI + Newton-Raphson refinement
+    
+    Returns:
+        (Ca_critical, Ca_values, x0_values, theta_min_values)
+    """
+    print("\nFinding critical Ca using improved two-stage method...")
+    
+    # Stage 1: Coarse logarithmic search
+    Ca_coarse = np.logspace(-4, np.log10(max(Ca_requested, 1e-3)), 30)
+    
+    # Initial guess
+    s_range = np.linspace(0, Delta, nGridInit)
+    y_guess = np.zeros((3, s_range.size))
+    y_guess[0, :] = lambda_slip + s_range * np.sin(theta0)
+    y_guess[1, :] = theta0
+    y_guess[2, :] = 0
+    
+    Ca_values = []
+    x0_values = []
+    theta_min_values = []
+    Ca_critical = 0
+    Ca_fail = None
+    
+    print("Stage 1: Coarse search...")
+    for i, Ca in enumerate(Ca_coarse):
+        if i % 5 == 0:
+            print(f"  Testing Ca = {Ca:.6f}")
+        
+        x0, theta_min, solution = solve_bvp_for_ca(
+            Ca, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess
+        )
+        
+        if solution is not None:
+            Ca_critical = Ca
+            Ca_values.append(Ca)
+            theta_min_values.append(theta_min)
+            s_range = solution.x
+            y_guess = solution.y
+            x0_values.append(x0)
+            
+            if theta_min < 0.1:
+                print(f"  theta_min approaching zero at Ca = {Ca:.6f} " +
+                      f"(θ_min = {theta_min*180/np.pi:.2f}°, x0 = {x0:.4f})")
+        else:
+            print(f"  Solution failed at Ca = {Ca:.6f}")
+            Ca_fail = Ca
+            break
+    
+    # Stage 2: Hybrid IQI + Newton refinement
+    if Ca_critical > 0 and Ca_fail is not None:
+        print("\nStage 2: Hybrid IQI + Newton-Raphson refinement...")
+        Ca_critical_refined = hybrid_iqi_newton_refinement(
+            Ca_critical, Ca_fail, mu_r, lambda_slip, theta0, w_bc, Delta,
+            s_range, y_guess, tolerance=tolerance
+        )
+        
+        if Ca_values:
+            Ca_values[-1] = Ca_critical_refined
+        Ca_critical = Ca_critical_refined
+    elif Ca_fail is None:
+        print(f"\nNo failure found up to Ca = {Ca_coarse[-1]:.6f}")
+    
+    print(f"\nFinal critical Ca: Ca_cr = {Ca_critical:.6f}")
+    
+    return Ca_critical, Ca_values, x0_values, theta_min_values
+
 
 class PseudoArclengthContinuation:
     """
@@ -248,7 +505,7 @@ class PseudoArclengthContinuation:
         """
         Compute tangent vector (dU/ds, dCa/ds) using finite differences
         """
-        # Perturb Ca
+        # Current solution
         x0_current, theta_min_current, _ = solve_bvp_for_ca(
             Ca, self.mu_r, self.lambda_slip, self.theta0, self.w_bc, self.Delta,
             solution.x, solution.y, tol=1e-6
@@ -268,8 +525,13 @@ class PseudoArclengthContinuation:
             if solution_plus is None:
                 return None
         
-        # Compute derivative of full solution vector
-        dU_dCa = (solution_plus.y - solution.y) / dCa
+        # Interpolate solution_plus to the same mesh as solution if needed
+        if len(solution_plus.x) != len(solution.x):
+            y_plus_interp = interpolate_solution_to_mesh(solution_plus, solution.x)
+            dU_dCa = (y_plus_interp - solution.y) / dCa
+        else:
+            # Compute derivative of full solution vector
+            dU_dCa = (solution_plus.y - solution.y) / dCa
         
         # Normalize to get tangent vector
         dU_dCa_norm = np.linalg.norm(dU_dCa.flatten())
@@ -320,13 +582,20 @@ class PseudoArclengthContinuation:
             
             # Check perpendicular constraint
             # N = (U - U_old)·(dU/ds)_old + (Ca - Ca_old)·(dCa/ds)_old - ds = 0
-            U_diff = (solution_new.y - solution_old.y).flatten()
+            # Interpolate if meshes are different
+            if len(solution_new.x) != len(solution_old.x):
+                y_new_interp = interpolate_solution_to_mesh(solution_new, solution_old.x)
+                U_diff = (y_new_interp - solution_old.y).flatten()
+            else:
+                U_diff = (solution_new.y - solution_old.y).flatten()
             dU_ds_flat = dU_ds.flatten()
             
             N = np.dot(U_diff, dU_ds_flat) + (Ca - Ca_old) * dCa_ds - ds
             
             if abs(N) < 1e-8:
                 self.previous_Ca.append(Ca)
+                # Update s_range for next iteration if mesh changed
+                s_range = solution_new.x
                 return Ca, solution_new, x0_new, theta_min_new
             
             # Newton update for Ca
@@ -335,7 +604,7 @@ class PseudoArclengthContinuation:
             
             x0_pert, theta_min_pert, solution_pert = solve_bvp_for_ca(
                 Ca_pert, self.mu_r, self.lambda_slip, self.theta0, self.w_bc, self.Delta,
-                s_range, solution_new.y, tol=1e-6
+                solution_new.x, solution_new.y, tol=1e-6
             )
             
             if solution_pert is None:
@@ -343,13 +612,18 @@ class PseudoArclengthContinuation:
                 Ca_pert = Ca + dCa_newton
                 x0_pert, theta_min_pert, solution_pert = solve_bvp_for_ca(
                     Ca_pert, self.mu_r, self.lambda_slip, self.theta0, self.w_bc, self.Delta,
-                    s_range, solution_new.y, tol=1e-6
+                    solution_new.x, solution_new.y, tol=1e-6
                 )
                 if solution_pert is None:
                     return None
             
             # Compute dN/dCa
-            U_diff_pert = (solution_pert.y - solution_old.y).flatten()
+            # Interpolate if meshes are different
+            if len(solution_pert.x) != len(solution_old.x):
+                y_pert_interp = interpolate_solution_to_mesh(solution_pert, solution_old.x)
+                U_diff_pert = (y_pert_interp - solution_old.y).flatten()
+            else:
+                U_diff_pert = (solution_pert.y - solution_old.y).flatten()
             N_pert = np.dot(U_diff_pert, dU_ds_flat) + (Ca_pert - Ca_old) * dCa_ds - ds
             dN_dCa = (N_pert - N) / dCa_newton
             
@@ -364,8 +638,9 @@ class PseudoArclengthContinuation:
                 Ca = Ca + delta_Ca
                 Ca = max(1e-6, min(1.0, Ca))  # Keep in bounds
                 
-                # Update guess
+                # Update guess and mesh
                 y_guess = solution_new.y
+                s_range = solution_new.x
             else:
                 break
         
@@ -385,18 +660,43 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Phase 0: Find approximate Ca_cr using GLE_solver's efficient method
-    print("\nPhase 0: Finding approximate Ca_cr using efficient bisection...")
+    # Phase 0: Find approximate Ca_cr using improved method
+    print("\nPhase 0: Finding approximate Ca_cr using improved IQI + Newton method...")
     start_time_phase0 = time.time()
     
-    # Use a coarse tolerance for the initial estimate
-    Ca_cr_approx, Ca_values_phase0, x0_values_phase0, theta_min_values_phase0 = find_critical_ca_lower_branch(
+    # First, solve at Ca=0 to get baseline x0 (position at theta_min)
+    print("  Solving at Ca=0 to establish baseline...")
+    s_range_ca0 = np.linspace(0, Delta, DEFAULT_NGRID)
+    y_guess_ca0 = np.zeros((3, len(s_range_ca0)))
+    y_guess_ca0[0, :] = np.linspace(lambda_slip, Delta, len(s_range_ca0))
+    y_guess_ca0[1, :] = theta0
+    y_guess_ca0[2, :] = 0
+    
+    result_ca0 = solve_single_ca(
+        Ca=0.0, mu_r=mu_r, lambda_slip=lambda_slip, theta0=theta0, 
+        w_bc=w_bc, Delta=Delta, s_range=s_range_ca0, y_guess=y_guess_ca0
+    )
+    
+    x0_ca_zero = None
+    if result_ca0.success:
+        x0_ca_zero = result_ca0.x0
+        if x0_ca_zero is not None:
+            print(f"  Ca=0 solution: x0 = {x0_ca_zero:.4f} (at theta_min = {result_ca0.theta_min*180/np.pi:.2f}°)")
+    
+    # Use our improved method with IQI + Newton refinement
+    Ca_cr_approx, Ca_values_phase0, x0_values_phase0, theta_min_values_phase0 = find_critical_ca_improved(
         mu_r, lambda_slip, theta0, w_bc, Delta, 
         nGridInit=DEFAULT_NGRID, 
         output_dir=output_dir,
         Ca_requested=1.0,  # High value to ensure we find Ca_cr
         tolerance=1e-3  # Coarse tolerance for speed
     )
+    
+    # Add Ca=0 result to phase 0 data if successful and x0 exists
+    if result_ca0.success and x0_ca_zero is not None:
+        Ca_values_phase0 = [0.0] + Ca_values_phase0
+        x0_values_phase0 = [x0_ca_zero] + x0_values_phase0
+        theta_min_values_phase0 = [result_ca0.theta_min] + theta_min_values_phase0
     
     phase0_time = time.time() - start_time_phase0
     print(f"Phase 0 completed in {phase0_time:.1f} seconds")
@@ -434,8 +734,8 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
         y_guess_init[1, :] = theta0
         y_guess_init[2, :] = 0
     
-    # Phase 1: Use x0 parameterization to capture detailed lower branch
-    print("\nPhase 1: Capturing detailed lower branch with x0 parameterization...")
+    # Phase 1: Use theta_min parameterization to capture detailed lower branch
+    print("\nPhase 1: Capturing detailed lower branch with theta_min parameterization...")
     start_time = time.time()
     
     # Initial exploration focused around Ca_cr_approx
@@ -461,6 +761,7 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
         x0, theta_min, solution = solve_bvp_for_ca(Ca, mu_r, lambda_slip, theta0, w_bc, Delta, s_range, y_guess)
         
         if x0 is not None:
+            # Only include solutions where theta reaches 90°
             x0_initial.append(x0)
             Ca_found_initial.append(Ca)
             theta_min_initial.append(theta_min)
@@ -475,7 +776,10 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
             y_guess = solution.y
             
             if len(x0_initial) % 5 == 0:
-                print(f"Ca = {Ca:.6f}, x0 = {x0:.4f}, theta_min = {theta_min*180/np.pi:.2f}°")
+                if x0 is not None:
+                    print(f"Ca = {Ca:.6f}, x0 = {x0:.4f}, theta_min = {theta_min*180/np.pi:.2f}°")
+                else:
+                    print(f"Ca = {Ca:.6f}, theta_max = {theta_min*180/np.pi:.2f}° < 90° (no x0)")
         else:
             # We've likely passed Ca_cr
             if Ca > Ca_cr_approx * 0.9:
@@ -527,43 +831,66 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
         
         print(f"  Refined turning point: Ca ≈ {Ca_turning_approx:.6f}, x0 ≈ {x0_turning_approx:.4f}")
     
-    # Dense x0 sweep focused on the region near turning point
-    # Since we know Ca_cr approximately, we can focus our efforts
-    x0_min = min(x0_initial) * 0.5
-    x0_max_lower = x0_turning_approx * 1.3  # Don't extend too far past turning point
+    # Build theta_min interpolating spline from initial exploration
+    theta_min_arr = np.array(theta_min_initial)
+    Ca_arr = np.array(Ca_found_initial)
+    sort_idx = np.argsort(theta_min_arr)
+    theta_min_sorted = theta_min_arr[sort_idx]
+    Ca_sorted_by_theta = Ca_arr[sort_idx]
     
-    # Create adaptive grid with most points near turning point
-    x0_grid1 = np.linspace(x0_min, x0_turning_approx * 0.9, 20)
-    x0_grid2 = np.linspace(x0_turning_approx * 0.9, x0_turning_approx * 1.1, 30)  # Dense near turning
-    x0_grid3 = np.linspace(x0_turning_approx * 1.1, x0_max_lower, 10)
-    x0_test_lower = np.unique(np.concatenate([x0_grid1, x0_grid2, x0_grid3]))
+    # Find turning point based on theta_min approaching zero
+    theta_min_turning_approx = theta_min_sorted[0]  # Smallest theta_min
+    Ca_turning_approx_theta = Ca_sorted_by_theta[0]
     
-    print(f"\nParallel x0 sweep for lower branch ({len(x0_test_lower)} points)...")
-    print(f"  x0 range: [{x0_min:.4f}, {x0_max_lower:.4f}]")
+    print(f"\nTurning point from theta_min analysis:")
+    print(f"  Ca ≈ {Ca_turning_approx_theta:.6f}, theta_min ≈ {theta_min_turning_approx*180/np.pi:.2f}°")
+    
+    # Dense theta_min sweep focused on the region near turning point
+    # For Ca=0, theta_min should be close to theta0
+    theta_min_ca_zero = theta0 if result_ca0.success else theta0
+    if result_ca0.success:
+        theta_min_ca_zero = result_ca0.theta_min
+        print(f"\nUsing theta_min from Ca=0 solution: {theta_min_ca_zero*180/np.pi:.2f}°")
+    
+    # Create theta_min range from near theta0 down to near zero
+    theta_min_max = min(theta_min_ca_zero * 0.95, max(theta_min_initial))
+    theta_min_min = max(theta_min_turning_approx * 0.1, 0.001)  # Don't go exactly to zero
+    
+    print(f"Phase 1 theta_min range: [{theta_min_min*180/np.pi:.2f}°, {theta_min_max*180/np.pi:.2f}°]")
+    
+    # Create adaptive grid with most points near turning point (small theta_min)
+    theta_min_grid1 = np.linspace(theta_min_max, theta_min_turning_approx * 2, 20)
+    theta_min_grid2 = np.linspace(theta_min_turning_approx * 2, theta_min_turning_approx * 0.5, 30)  # Dense near turning
+    theta_min_grid3 = np.linspace(theta_min_turning_approx * 0.5, theta_min_min, 10)
+    theta_min_test_lower = np.unique(np.concatenate([theta_min_grid1, theta_min_grid2, theta_min_grid3]))
+    
+    print(f"\nParallel theta_min sweep for lower branch ({len(theta_min_test_lower)} points)...")
+    print(f"  theta_min range: [{theta_min_min*180/np.pi:.2f}°, {theta_min_max*180/np.pi:.2f}°]")
     
     # Build spline for initial guesses
-    Ca_spline = UnivariateSpline(x0_sorted, Ca_sorted, k=min(3, len(x0_sorted)-1), s=0)
+    Ca_spline_data = (theta_min_sorted, Ca_sorted_by_theta)
+    Ca_spline = UnivariateSpline(theta_min_sorted, Ca_sorted_by_theta, k=min(3, len(theta_min_sorted)-1), s=0)
     
     args_list = []
-    for x0_target in x0_test_lower:
+    for theta_min_target in theta_min_test_lower:
         try:
-            Ca_guess = float(Ca_spline(x0_target))
+            Ca_guess = float(Ca_spline(theta_min_target))
             Ca_guess = max(1e-6, min(1.0, Ca_guess))
         except:
             # Extrapolation fallback
-            if x0_target < x0_sorted[0]:
-                Ca_guess = Ca_sorted[0] * (x0_target / x0_sorted[0])**0.5
+            if theta_min_target > theta_min_sorted[-1]:
+                Ca_guess = Ca_sorted_by_theta[-1] * (theta_min_target / theta_min_sorted[-1])**2
             else:
-                Ca_guess = Ca_sorted[-1]
+                Ca_guess = Ca_sorted_by_theta[0]
         
-        args_list.append((x0_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, Delta, Ca_spline_data))
+        args_list.append((theta_min_target, Ca_guess, mu_r, lambda_slip, theta0, w_bc, Delta, Ca_spline_data))
     
     # Parallel execution with progress tracking
     lower_branch_results = []
     failed_count = 0
     
     with Pool(n_workers) as pool:
-        for i, result in enumerate(pool.imap_unordered(worker_solve_x0, args_list)):
+        for i, result in enumerate(pool.imap_unordered(worker_solve_theta_min, args_list)):
             if result is not None:
                 lower_branch_results.append(result)
             else:
@@ -572,7 +899,7 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
             # Progress update
             if (i + 1) % 20 == 0:
                 success_rate = len(lower_branch_results) / (i + 1) * 100
-                print(f"  Progress: {i+1}/{len(x0_test_lower)} points, "
+                print(f"  Progress: {i+1}/{len(theta_min_test_lower)} points, "
                       f"success rate: {success_rate:.1f}%")
     
     phase1_time = time.time() - start_time
@@ -692,16 +1019,37 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
     print(f"\nPhase 2 completed in {phase2_time:.1f} seconds")
     print(f"Found {len(upper_branch_Ca)-1} additional points on upper branch")
     
-    # Combine results with branch tracking
+    # Combine results from all phases with branch tracking
     all_results = []
     branch_labels = []
+    phase_labels = []  # Track which phase found each point
     
-    # Add lower branch results
+    # Add Phase 0 results (coarse exploration)
+    if Ca_values_phase0:
+        for i in range(len(Ca_values_phase0)):
+            all_results.append({
+                'Ca': Ca_values_phase0[i],
+                'x0': x0_values_phase0[i],
+                'theta_min': theta_min_values_phase0[i]
+            })
+            branch_labels.append('lower')
+            phase_labels.append('phase0')
+    
+    # Add Phase 1 results (detailed lower branch)
     for r in lower_branch_results:
-        all_results.append(r)
-        branch_labels.append('lower')
+        # Check if this point is already in results (avoid duplicates)
+        is_duplicate = False
+        for existing in all_results:
+            if abs(existing['Ca'] - r['Ca']) < 1e-8:
+                is_duplicate = True
+                break
+        
+        if not is_duplicate:
+            all_results.append(r)
+            branch_labels.append('lower')
+            phase_labels.append('phase1')
     
-    # Add upper branch points (excluding the turning point which is already included)
+    # Add Phase 2 results (upper branch points, excluding the turning point)
     for i in range(1, len(upper_branch_Ca)):
         all_results.append({
             'Ca': upper_branch_Ca[i],
@@ -709,19 +1057,22 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
             'theta_min': upper_branch_theta_min[i]
         })
         branch_labels.append('upper')
+        phase_labels.append('phase2')
     
     # Extract arrays
     Ca_all = np.array([r['Ca'] for r in all_results])
     x0_all = np.array([r['x0'] for r in all_results])
     theta_min_all = np.array([r['theta_min'] for r in all_results])
     branch_all = np.array(branch_labels)
+    phase_all = np.array(phase_labels)
     
-    # Sort by Ca while keeping track of branches
+    # Sort by Ca while keeping track of branches and phases
     sort_idx = np.argsort(Ca_all)
     Ca_sorted = Ca_all[sort_idx]
     x0_sorted = x0_all[sort_idx]
     theta_min_sorted = theta_min_all[sort_idx]
     branch_sorted = branch_all[sort_idx]
+    phase_sorted = phase_all[sort_idx]
     
     # Find critical point (maximum Ca)
     Ca_max_idx = np.argmax(Ca_sorted)
@@ -736,6 +1087,15 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
     print(f"\nBranch statistics:")
     print(f"  Lower branch points: {lower_branch_count}")
     print(f"  Upper branch points: {upper_branch_count}")
+    
+    # Phase statistics
+    phase0_count = np.sum(phase_sorted == 'phase0')
+    phase1_count = np.sum(phase_sorted == 'phase1')
+    phase2_count = np.sum(phase_sorted == 'phase2')
+    print(f"\nPhase contributions:")
+    print(f"  Phase 0 points: {phase0_count}")
+    print(f"  Phase 1 points: {phase1_count}")
+    print(f"  Phase 2 points: {phase2_count}")
     
     if upper_branch_count < 5:
         print("\nWarning: Few points on upper branch. Consider adjusting continuation parameters.")
@@ -756,75 +1116,124 @@ def trace_both_branches_hybrid(mu_r, lambda_slip, theta0=DEFAULT_THETA0, w_bc=DE
           f"allowing focused exploration")
     
     # Create plots
-    plot_bifurcation_hybrid(Ca_sorted, x0_sorted, theta_min_sorted, branch_sorted, Ca_critical,
-                           x0_critical, theta_min_critical, mu_r, lambda_slip, output_dir)
+    plot_bifurcation_hybrid(Ca_sorted, x0_sorted, theta_min_sorted, branch_sorted, phase_sorted,
+                           Ca_critical, x0_critical, theta_min_critical, mu_r, lambda_slip, output_dir)
     
-    # Save data with branch information
-    # Convert branch labels to numeric (0=lower, 1=upper)
+    # Save data with branch and phase information
+    # Convert labels to numeric
     branch_numeric = np.array([0 if b == 'lower' else 1 for b in branch_sorted])
-    csv_data = np.column_stack((Ca_sorted, x0_sorted, theta_min_sorted, theta_min_sorted*180/np.pi, branch_numeric))
+    phase_numeric = np.array([0 if p == 'phase0' else 1 if p == 'phase1' else 2 for p in phase_sorted])
+    csv_data = np.column_stack((Ca_sorted, x0_sorted, theta_min_sorted, theta_min_sorted*180/np.pi, 
+                               branch_numeric, phase_numeric))
     csv_path = os.path.join(output_dir, 'both_branches_hybrid.csv')
     np.savetxt(csv_path, csv_data, delimiter=',',
-               header='Ca,x0,theta_min_rad,theta_min_deg,branch(0=lower,1=upper)', comments='')
+               header='Ca,x0,theta_min_rad,theta_min_deg,branch(0=lower,1=upper),phase(0,1,2)', 
+               comments='')
     print(f"\nData saved to: {csv_path}")
     
     return Ca_sorted, x0_sorted, theta_min_sorted
 
-def plot_bifurcation_hybrid(Ca_sorted, x0_sorted, theta_min_sorted, branch_sorted, Ca_critical,
-                           x0_critical, theta_min_critical, mu_r, lambda_slip, output_dir):
-    """Create bifurcation diagram plots"""
+def plot_bifurcation_hybrid(Ca_sorted, x0_sorted, theta_min_sorted, branch_sorted, phase_sorted,
+                           Ca_critical, x0_critical, theta_min_critical, mu_r, lambda_slip, output_dir):
+    """Create bifurcation diagram plots with phase information"""
     # Separate branches based on labels
     lower_mask = branch_sorted == 'lower'
     upper_mask = branch_sorted == 'upper'
+    
+    # Separate phases for different markers
+    phase0_mask = phase_sorted == 'phase0'
+    phase1_mask = phase_sorted == 'phase1'
+    phase2_mask = phase_sorted == 'phase2'
+    
+    # Check if we have valid x0 data
+    has_x0_data = x0_sorted is not None and any(x is not None for x in x0_sorted)
     
     # Create plots
     plt.style.use('seaborn-v0_8-darkgrid')
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
     
-    # Plot 1: x0 vs Ca
-    ax1.plot(Ca_sorted[lower_mask], x0_sorted[lower_mask], 'b-', linewidth=3, label='Lower branch (stable)')
-    ax1.scatter(Ca_sorted[lower_mask], x0_sorted[lower_mask], color='blue', s=30, alpha=0.6)
+    # Plot 1: theta_min vs Ca with phase distinction (PRIMARY)
+    theta_min_deg = theta_min_sorted * 180 / np.pi
     
+    # Plot lines for branches
+    ax1.plot(Ca_sorted[lower_mask], theta_min_deg[lower_mask], 'b-', linewidth=2.5, 
+             label='Lower branch (stable)', alpha=0.7)
     if np.sum(upper_mask) > 1:
-        ax1.plot(Ca_sorted[upper_mask], x0_sorted[upper_mask], 'r--', linewidth=3, label='Upper branch (unstable)')
-        ax1.scatter(Ca_sorted[upper_mask], x0_sorted[upper_mask], color='red', s=30, alpha=0.6)
+        ax1.plot(Ca_sorted[upper_mask], theta_min_deg[upper_mask], 'r--', linewidth=2.5, 
+                 label='Upper branch (unstable)', alpha=0.7)
     
-    ax1.scatter(Ca_critical, x0_critical, color='green', s=200, marker='*',
+    # Add scatter points with different markers for each phase
+    if np.sum(phase0_mask & lower_mask) > 0:
+        ax1.scatter(Ca_sorted[phase0_mask & lower_mask], theta_min_deg[phase0_mask & lower_mask], 
+                   color='lightblue', s=20, alpha=0.6, marker='o', label='Phase 0 (coarse)')
+    if np.sum(phase1_mask & lower_mask) > 0:
+        ax1.scatter(Ca_sorted[phase1_mask & lower_mask], theta_min_deg[phase1_mask & lower_mask], 
+                   color='blue', s=40, alpha=0.8, marker='s', label='Phase 1 (detailed)')
+    if np.sum(phase2_mask) > 0:
+        ax1.scatter(Ca_sorted[phase2_mask], theta_min_deg[phase2_mask], 
+                   color='red', s=40, alpha=0.8, marker='^', label='Phase 2 (arclength)')
+    
+    ax1.scatter(Ca_critical, theta_min_critical*180/np.pi, color='green', s=200, marker='*',
                 zorder=5, label=f'Turning point\n(Ca={Ca_critical:.5f})')
     
     ax1.set_xlabel('Ca (Capillary Number)', fontsize=14)
-    ax1.set_ylabel('$x_0$ (Position at $\\theta_{min}$)', fontsize=14)
-    ax1.set_title('Bifurcation Diagram: $x_0$ vs Ca', fontsize=16, fontweight='bold')
+    ax1.set_ylabel('$\\theta_{min}$ [degrees]', fontsize=14)
+    ax1.set_title('Bifurcation Diagram: $\\theta_{min}$ vs Ca (PRIMARY)', fontsize=16, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=12)
+    ax1.axhline(y=0, color='gray', linestyle=':', alpha=0.5)
     
     if Ca_sorted.max() / Ca_sorted.min() > 100:
         ax1.set_xscale('log')
         ax1.set_xlabel('Ca (Capillary Number) [log scale]', fontsize=14)
     
-    # Plot 2: theta_min vs Ca
-    theta_min_deg = theta_min_sorted * 180 / np.pi
-    
-    ax2.plot(Ca_sorted[lower_mask], theta_min_deg[lower_mask], 'b-', linewidth=3, label='Lower branch (stable)')
-    ax2.scatter(Ca_sorted[lower_mask], theta_min_deg[lower_mask], color='blue', s=30, alpha=0.6)
-    
-    if np.sum(upper_mask) > 1:
-        ax2.plot(Ca_sorted[upper_mask], theta_min_deg[upper_mask], 'r--', linewidth=3, label='Upper branch (unstable)')
-        ax2.scatter(Ca_sorted[upper_mask], theta_min_deg[upper_mask], color='red', s=30, alpha=0.6)
-    
-    ax2.scatter(Ca_critical, theta_min_critical*180/np.pi, color='green', s=200, marker='*',
-                zorder=5, label=f'Turning point')
-    
-    ax2.set_xlabel('Ca (Capillary Number)', fontsize=14)
-    ax2.set_ylabel('$\\theta_{min}$ [degrees]', fontsize=14)
-    ax2.set_title('Bifurcation Diagram: $\\theta_{min}$ vs Ca', fontsize=16, fontweight='bold')
-    ax2.grid(True, alpha=0.3)
-    ax2.legend(fontsize=12)
-    ax2.axhline(y=0, color='gray', linestyle=':', alpha=0.5)
-    
-    if Ca_sorted.max() / Ca_sorted.min() > 100:
-        ax2.set_xscale('log')
-        ax2.set_xlabel('Ca (Capillary Number) [log scale]', fontsize=14)
+    # Plot 2: x0 vs Ca with phase distinction (SECONDARY - if data exists)
+    if has_x0_data:
+        # Filter out None values
+        valid_x0_mask = np.array([x is not None for x in x0_sorted])
+        
+        # Plot lines for branches (only where x0 exists)
+        lower_valid = lower_mask & valid_x0_mask
+        upper_valid = upper_mask & valid_x0_mask
+        
+        if np.sum(lower_valid) > 1:
+            ax2.plot(Ca_sorted[lower_valid], x0_sorted[lower_valid], 'b-', linewidth=2.5, 
+                     label='Lower branch (stable)', alpha=0.7)
+        if np.sum(upper_valid) > 1:
+            ax2.plot(Ca_sorted[upper_valid], x0_sorted[upper_valid], 'r--', linewidth=2.5, 
+                     label='Upper branch (unstable)', alpha=0.7)
+        
+        # Add scatter points with different markers for each phase
+        if np.sum(phase0_mask & lower_valid) > 0:
+            ax2.scatter(Ca_sorted[phase0_mask & lower_valid], x0_sorted[phase0_mask & lower_valid], 
+                       color='lightblue', s=20, alpha=0.6, marker='o')
+        if np.sum(phase1_mask & lower_valid) > 0:
+            ax2.scatter(Ca_sorted[phase1_mask & lower_valid], x0_sorted[phase1_mask & lower_valid], 
+                       color='blue', s=40, alpha=0.8, marker='s')
+        if np.sum(phase2_mask & valid_x0_mask) > 0:
+            ax2.scatter(Ca_sorted[phase2_mask & valid_x0_mask], x0_sorted[phase2_mask & valid_x0_mask], 
+                       color='red', s=40, alpha=0.8, marker='^')
+        
+        if x0_critical is not None:
+            ax2.scatter(Ca_critical, x0_critical, color='green', s=200, marker='*',
+                        zorder=5, label=f'Turning point')
+        
+        ax2.set_xlabel('Ca (Capillary Number)', fontsize=14)
+        ax2.set_ylabel('$x_0$ (Position at $\\theta_{min}$)', fontsize=14)
+        ax2.set_title('Bifurcation Diagram: $x_0$ vs Ca', fontsize=16, fontweight='bold')
+        ax2.grid(True, alpha=0.3)
+        ax2.legend(fontsize=12)
+        
+        if Ca_sorted.max() / Ca_sorted.min() > 100:
+            ax2.set_xscale('log')
+            ax2.set_xlabel('Ca (Capillary Number) [log scale]', fontsize=14)
+    else:
+        # No x0 data - this should not happen with the new definition
+        ax2.text(0.5, 0.5, 'No x0 data available\n(Error: x0 should always exist)', 
+                 transform=ax2.transAxes, ha='center', va='center', fontsize=16)
+        ax2.set_xlabel('Ca (Capillary Number)', fontsize=14)
+        ax2.set_ylabel('$x_0$', fontsize=14)
+        ax2.set_title('Bifurcation Diagram: $x_0$ vs Ca', fontsize=16, fontweight='bold')
     
     plt.suptitle(f'Both Solution Branches - HYBRID METHOD ($\\mu_r$ = {mu_r:.0e}, $\\lambda_{{slip}}$ = {lambda_slip:.0e})',
                  fontsize=18, fontweight='bold')
