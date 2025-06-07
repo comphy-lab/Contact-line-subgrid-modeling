@@ -39,25 +39,7 @@ def boundary_conditions(ya, yb, omega_bc):
         omega_b - omega_bc         # w(Delta) = w_bc (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w_bc, comes from the DNS.
     ]
 
-# def run_solver_and_plot(GUI=False, output_dir='output'):
-    """Run the solver and either display or save plots
-
-    Args:
-        GUI (bool): If True, display plots. If False, save to files.
-        output_dir (str): Directory to save plots when GUI=False
-
-    Returns:
-        tuple: (solution, s_values, h_values, theta_values, w_values)
-    """
-    # # Set matplotlib backend based on GUI parameter
-    # if not GUI:
-    #     import matplotlib
-    #     matplotlib.use('Agg')  # Use non-interactive backend
-    
-    # # Create output directory if it doesn't exist (always create for CSV)
-    # os.makedirs(output_dir, exist_ok=True)
-
-    # Initial guess for the solution
+# Initial guess for the solution
 s_max = 10 # adjust as needed for your problem
 x_range_local = np.linspace(0, s_max, 100000)  # Define the range of s with finite values
 y_guess_local = np.zeros((3, x_range_local.size))  # Initial guess for [h, theta, w]
@@ -65,31 +47,31 @@ y_guess_local[0, :] = np.linspace(h0, s_max, x_range_local.size)  # Linear guess
 y_guess_local[1, :] = slope0  # Initial guess for theta
 y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
-    # Solve the ODEs
-    # Use partial to pass omega_bc as a parameter to boundary_conditions
+# Solve the ODEs
+# Use partial to pass omega_bc as a parameter to boundary_conditions
 bc_with_w = partial(boundary_conditions, omega_bc=omega_bc)
 solution = solve_bvp(GLE, bc_with_w, x_range_local, y_guess_local, max_nodes=1000000)
 
-    # Extract the solution
+# Extract the solution
 x_values_local = solution.x
 h_values_local, alpha_values_local, omega_values_local = solution.y
 
 try:
-        data_path = 'Minkush data.csv'
-        df = pd.read_csv(data_path, delimiter=', ', engine='python')
-        x_csv = df.iloc[:, 0].values
-        h_csv = df.iloc[:, 1].values
-except Exception as e:
-        print(f"Failed to load CSV: {e}")
-        x_csv = h_csv = None    
+    data_path = 'Minkush data.csv'
+    df = pd.read_csv(data_path, delimiter=', ', engine='python')
+    x_csv = df.iloc[:, 0].values
+    h_csv = df.iloc[:, 1].values
+except (FileNotFoundError, pd.errors.ParserError) as e:
+    print(f"Failed to load CSV: {e}")
+    x_csv = h_csv = None    
     
-    # Plot h(s)
+# Plot h(s)
 fig, ax = plt.subplots(figsize=(12, 6))
 ax.plot(x_values_local, h_values_local, '-')
 if x_csv is not None and h_csv is not None:
     ax.plot(x_csv, h_csv, 'o', label='Minkush Data', markersize=4)
 
-    # Only plot h(s) vs s (no subplots)
+# Only plot h(s) vs s (no subplots)
 
 ax.set_xlabel('x', fontsize=12)
 ax.set_ylabel('h', fontsize=12)
