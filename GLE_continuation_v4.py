@@ -14,7 +14,7 @@ Features:
 - Adaptive step size control
 - Clean plotting and data export
 
-Author: Assistant
+Author: Vatsal Sanjay (vatsalsy@comphy-lab.org)
 Date: 2025
 */
 """
