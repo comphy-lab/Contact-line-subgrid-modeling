@@ -31,6 +31,8 @@ from gle_utils import (
     GLE, boundary_conditions,
     f1, f2, f3, f
 )
+from solver_utils import solve_single_ca
+from GLE_criticalCa import find_critical_ca_lower_branch
 
 # Default parameters
 DEFAULT_DELTA = 1e1  # Maximum s-value for the solver
@@ -196,17 +198,38 @@ def create_solution_plots(solution, Ca: float, mu_r: float, lambda_slip: float,
     plt.tight_layout()
     
     # Save plot
-    plot_path = os.path.join(output_dir, 'pyGLE_solver-profiles.png')
+    plot_path = os.path.join(output_dir, 'GLE_profiles.png')
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Plot saved to: {plot_path}")
     
     # Save data to CSV
     csv_data = np.column_stack((s_values, h_values, theta_values, w_values, x_values))
-    csv_path = os.path.join(output_dir, 'pyGLE_solver-profiles.csv')
-    np.savetxt(csv_path, csv_data, delimiter=',', 
+    csv_path = os.path.join(output_dir, 'GLE_profiles.csv')
+    np.savetxt(csv_path, csv_data, delimiter=',',
                header='s,h,theta,w,x', comments='')
     print(f"Data saved to: {csv_path}")
+
+
+def run_solver_and_plot(**kwargs):
+  """Run solver and generate plots (compatibility wrapper)."""
+  Ca = kwargs.get('Ca', DEFAULT_CA)
+  mu_r = kwargs.get('mu_r', DEFAULT_MU_R)
+  lambda_slip = kwargs.get('lambda_slip', DEFAULT_LAMBDA_SLIP)
+  theta0 = kwargs.get('theta0', DEFAULT_THETA0)
+  w = kwargs.get('w', DEFAULT_W)
+  Delta = kwargs.get('Delta', DEFAULT_DELTA)
+  ngrid = kwargs.get('ngrid', DEFAULT_NGRID)
+  output_dir = kwargs.get('output_dir', 'output')
+
+  solution, _ = solve_gle(Ca, mu_r, lambda_slip, theta0, w, Delta, ngrid)
+  if solution is not None:
+    create_solution_plots(solution, Ca, mu_r, lambda_slip,
+                          theta0, Delta, output_dir)
+  return solution, (solution.x if solution else []), (
+    solution.y[0] if solution else []), (
+    solution.y[1] if solution else []), (
+    solution.y[2] if solution else [])
 
 
 def main():
