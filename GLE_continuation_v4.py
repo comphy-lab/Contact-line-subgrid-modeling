@@ -118,7 +118,7 @@ class GLEContinuation:
       print(f"theta0={self.params.theta0*180/np.pi:.1f}°\n")
     
     # Get reference solution at Ca ≈ 0
-    result_ref = self.solve_at_ca(1e-6)
+    result_ref = self.solve_at_ca(0.0)
     if result_ref:
       self.X_cl_ref = result_ref.X_cl
       if self.params.verbose:
