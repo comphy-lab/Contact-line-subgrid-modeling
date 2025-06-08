@@ -8,10 +8,11 @@ This repository contains Python implementations for contact line subgrid modelin
 
 ## Recent Updates
 
-### x0 Definition (Updated)
-- x0 is now consistently defined as the x-position where θ reaches its minimum value
-- This definition is implemented in `src-local/find_x0_utils.py`
-- Both GLE_solver.py and GLE_continuation_hybrid.py import this shared utility
+### x0 and X_cl Definitions (Updated)
+- **x0**: The x-position where θ reaches its minimum value
+- **X_cl**: The contact line position, defined as the maximum x value (x at s=Delta)
+- These definitions are implemented in `src-local/find_x0_utils.py`
+- δX_cl = X_cl(Ca) - X_cl(Ca≈0) represents the contact line displacement
 - When θ_min approaches 0, we are at the critical capillary number (Ca_cr)
 
 ## Key Components
@@ -101,6 +102,8 @@ The code implements solutions to the contact line dynamics problem where:
 - h: Film thickness
 - s: Arc length coordinate along the interface
 - x0: Position where θ reaches its minimum value
+- X_cl: Contact line position (x at s=Delta, the end of the domain)
+- δX_cl: Contact line displacement relative to Ca≈0
 - omega (ω): Curvature (dθ/ds)
 
 The system exhibits a bifurcation structure with:
