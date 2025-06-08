@@ -126,9 +126,6 @@ cache/
 *.log
 *.tmp
 
-# Generated output files
-output/
-test/test_output/
 
 # Explicitly allow Claude files
 !.claude/
