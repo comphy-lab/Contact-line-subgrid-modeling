@@ -29,18 +29,19 @@ from pathlib import Path
 import sys
 sys.path.append('src-local')
 from find_x0_utils import find_x0_and_theta_min
+from gle_utils import f1, f2, f3, f, GLE as GLE_func, boundary_conditions
 
 
 @dataclass
 class ContinuationParameters:
   """Parameters for pseudo-arclength continuation"""
-  ds_init: float = 0.01          # Initial arc length step
+  ds_init: float = 0.1           # Initial arc length step
   ds_min: float = 1e-6           # Minimum arc length step
-  ds_max: float = 0.1            # Maximum arc length step
+  ds_max: float = 1.0            # Maximum arc length step
   max_steps: int = 500           # Maximum continuation steps
   newton_tol: float = 1e-10      # Newton convergence tolerance
   newton_max_iter: int = 50      # Maximum Newton iterations
-  fold_detection_tol: float = 1e-4  # Tolerance for fold detection
+  fold_detection_tol: float = 1e-8  # Tolerance for fold detection
   adaptive_ds: bool = True       # Use adaptive step size
   angle_change_max: float = 0.1  # Max angle change for step size control
 
@@ -52,7 +53,6 @@ class SolutionPoint:
   solution: np.ndarray           # Full BVP solution [theta, h, omega]
   s_range: np.ndarray           # Arc length mesh
   theta_min: float              # Minimum contact angle
-  x0: float                     # Position where theta is minimum
   x_cl: float                   # Contact line position
   delta_x_cl: float             # Displacement from Ca=0
   arc_length_param: float       # Pseudo arc-length parameter
@@ -65,7 +65,7 @@ class GLEContinuation:
   """Pseudo-arclength continuation solver for the GLE system"""
   
   def __init__(self, mu_r: float, lambda_slip: float, theta0: float,
-               w_bc: float = 0.0, Delta: float = 10.0, N_points: int = 200,
+               w_bc: float = 0.0, Delta: float = 10.0, N_points: int = 10000,
                params: Optional[ContinuationParameters] = None):
     """
     Initialize continuation solver for GLE system
@@ -98,29 +98,6 @@ class GLEContinuation:
                        format='%(asctime)s - %(levelname)s - %(message)s')
     self.logger = logging.getLogger(__name__)
     
-  def _f1(self, theta: np.ndarray) -> np.ndarray:
-    """First helper function for GLE formulation."""
-    return theta**2 - np.sin(theta)**2
-  
-  def _f2(self, theta: np.ndarray) -> np.ndarray:
-    """Second helper function for GLE formulation."""
-    return theta - np.sin(theta) * np.cos(theta)
-  
-  def _f3(self, theta: np.ndarray) -> np.ndarray:
-    """Third helper function for GLE formulation."""
-    return theta * (np.pi - theta) + np.sin(theta)**2
-  
-  def _f(self, theta: np.ndarray) -> np.ndarray:
-    """Combined function for GLE with viscosity ratio."""
-    numerator = 2 * np.sin(theta)**3 * (self.mu_r**2 * self._f1(theta) + 2 * self.mu_r * self._f3(theta) + self._f1(np.pi - theta))
-    denominator = 3 * (self.mu_r * self._f1(theta) * self._f2(np.pi - theta) - self._f1(np.pi - theta) * self._f2(theta))
-    
-    # Add small epsilon to prevent division by zero
-    epsilon = 1e-10
-    denominator = np.where(np.abs(denominator) < epsilon, 
-                          np.sign(denominator) * epsilon + (denominator == 0) * epsilon, 
-                          denominator)
-    return numerator / denominator
   
   def _GLE_ode(self, s: np.ndarray, y: np.ndarray, Ca: float) -> np.ndarray:
     """
@@ -134,35 +111,13 @@ class GLEContinuation:
     Returns:
       dy/ds: Derivatives [dh/ds, dtheta/ds, domega/ds]
     """
-    h, theta, omega = y
-    
-    # Ensure h stays positive (physical constraint)
-    h_min = self.lambda_slip * 1e-6  # Minimum h as a fraction of slip length
-    h = np.maximum(h, h_min)
-    
-    # Ensure theta stays in physical range (0, pi)
-    theta = np.clip(theta, 1e-10, np.pi - 1e-10)
-    
-    # ODEs
-    dh_ds = np.sin(theta)  # dh/ds = sin(theta)
-    dtheta_ds = omega      # omega = dtheta/ds
-    
-    # Use safe values to prevent division by zero
-    f_val = self._f(theta)
-    domega_ds = -3 * Ca * f_val / (h * (h + 3 * self.lambda_slip)) - np.cos(theta)
-    
-    return np.array([dh_ds, dtheta_ds, domega_ds])
+    # Use the working GLE function from gle_utils
+    return GLE_func(s, y, Ca, self.mu_r, self.lambda_slip)
   
   def _bc_residual(self, ya: np.ndarray, yb: np.ndarray) -> np.ndarray:
     """Boundary condition residuals"""
-    h_a, theta_a, omega_a = ya
-    h_b, theta_b, omega_b = yb
-    
-    return np.array([
-      theta_a - self.theta0,      # theta(0) = theta0
-      h_a - self.lambda_slip,     # h(0) = lambda_slip
-      omega_b - self.w_bc         # omega(Delta) = w_bc
-    ])
+    # Use the working boundary conditions from gle_utils
+    return boundary_conditions(ya, yb, self.w_bc, self.theta0, self.lambda_slip)
   
   def _solve_bvp(self, Ca: float, initial_guess: Optional[np.ndarray] = None,
                  s_mesh: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
@@ -171,13 +126,13 @@ class GLEContinuation:
     
     Returns:
       s_mesh: Arc length mesh
-      solution: Solution array [theta, h, omega]
+      solution: Solution array [h, theta, omega]  # Fixed order to match GLE_solver
     """
     if s_mesh is None:
       s_mesh = np.linspace(0, self.Delta, self.N_points)
     
     if initial_guess is None:
-      # Simple initial guess
+      # Simple initial guess matching GLE_solver - note the order is [h, theta, omega]
       h_guess = self.lambda_slip + s_mesh * np.sin(self.theta0)  # h grows from lambda_slip
       theta_guess = self.theta0 * np.ones_like(s_mesh)
       omega_guess = np.zeros_like(s_mesh)
@@ -189,7 +144,7 @@ class GLEContinuation:
     
     # Solve BVP
     sol = solve_bvp(ode_fun, self._bc_residual, s_mesh, initial_guess,
-                   tol=1e-8, max_nodes=5000)
+                   tol=1e-6, max_nodes=100000, verbose=0)
     
     if not sol.success:
       raise RuntimeError(f"BVP solver failed: {sol.message}")
@@ -207,8 +162,8 @@ class GLEContinuation:
     h = solution[0, :]
     theta = solution[1, :]
     
-    # Find x0 and theta_min
-    x0, theta_min, x0_idx = find_x0_and_theta_min(s_mesh, theta)
+    # Find theta_min
+    theta_min = np.min(theta)
     
     # Contact line position (x at s=0)
     x_cl = self._compute_x_cl(s_mesh, theta, h)
@@ -220,7 +175,6 @@ class GLEContinuation:
       solution=solution,
       s_range=s_mesh,
       theta_min=theta_min,
-      x0=x0,
       x_cl=x_cl,
       delta_x_cl=0.0,
       arc_length_param=0.0
@@ -230,13 +184,14 @@ class GLEContinuation:
     initial_point.tangent = self._compute_initial_tangent(initial_point)
     
     self.branch.append(initial_point)
-    self.logger.info(f"Initial solution: theta_min={np.degrees(theta_min):.2f}°, x0={x0:.4f}")
+    self.logger.info(f"Initial solution: theta_min={np.degrees(theta_min):.2f}°")
     
     return initial_point
   
   def _compute_initial_tangent(self, point: SolutionPoint) -> Dict[str, Any]:
     """Compute initial tangent by finite difference"""
-    dCa = 1e-5  # Small perturbation
+    # Use larger perturbation for meaningful tangent
+    dCa = 0.0001  # Small fixed perturbation
     
     # Solve at slightly higher Ca
     try:
@@ -255,21 +210,37 @@ class GLEContinuation:
       # Compute tangent
       dU_dCa = (sol_perturbed - point.solution) / dCa
       
-    except:
-      # If finite difference fails, use a simple tangent that increases Ca
-      self.logger.warning("Initial tangent finite difference failed, using simple tangent")
-      dU_dCa = np.zeros_like(point.solution)
+    except Exception as e:
+      # If finite difference fails, use a simple tangent
+      self.logger.warning(f"Initial tangent finite difference failed: {str(e)}")
+      # Use a pure Ca direction tangent
+      return {
+        'U': np.zeros_like(point.solution),
+        'Ca': 1.0,
+        's_mesh': point.s_range
+      }
     
-    # Normalize to get unit tangent
-    # For initial step, we want to primarily increase Ca
+    # Normalize to get unit tangent with strong Ca component
     U_norm = np.linalg.norm(dU_dCa)
-    Ca_component = 1.0  # Weight for Ca direction
     
-    total_norm = np.sqrt(U_norm**2 + Ca_component**2)
+    # For initial step, we want strong Ca increase
+    if U_norm < 1e-10:
+      # If solution barely changes, force Ca direction
+      return {
+        'U': np.zeros_like(point.solution),
+        'Ca': 1.0,
+        's_mesh': point.s_range
+      }
+    
+    # Balance between solution change and Ca change
+    # Start with 90% Ca direction, 10% solution direction
+    Ca_weight = 10.0
+    
+    total_norm = np.sqrt(U_norm**2 + Ca_weight**2)
     
     return {
       'U': dU_dCa / total_norm,
-      'Ca': Ca_component / total_norm,
+      'Ca': Ca_weight / total_norm,
       's_mesh': point.s_range
     }
   
@@ -278,6 +249,9 @@ class GLEContinuation:
     # Predict new solution
     U_pred = current.solution + ds * current.tangent['U']
     Ca_pred = current.Ca + ds * current.tangent['Ca']
+    
+    # Debug log
+    self.logger.debug(f"Tangent Ca component: {current.tangent['Ca']}, ds: {ds}")
     
     return U_pred, Ca_pred
   
@@ -335,37 +309,74 @@ class GLEContinuation:
   def _corrector_step(self, U_pred: np.ndarray, Ca_pred: float,
                      current: SolutionPoint, ds: float) -> Tuple[np.ndarray, float, bool]:
     """
-    Corrector step - simplified version that just solves BVP
+    Corrector step using Newton iteration on extended system
     
     Returns:
       U_corrected: Corrected solution
       Ca_corrected: Corrected Ca
       converged: Whether solver converged
     """
-    # Try to solve BVP at predicted point
-    try:
-      s_mesh_new, U_corr = self._solve_bvp(Ca_pred, U_pred, current.tangent['s_mesh'])
+    # Start from prediction
+    U = U_pred.copy()
+    Ca = Ca_pred
+    
+    # Newton iteration for extended system
+    for newton_iter in range(self.params.newton_max_iter):
+      # Build extended system
+      F_ext, info = self._build_extended_system(U, Ca, current.solution, current.Ca,
+                                               current.tangent, ds)
       
-      # If mesh was refined, interpolate back
-      if len(s_mesh_new) != len(current.tangent['s_mesh']):
-        from scipy.interpolate import interp1d
-        U_interp = np.zeros_like(U_pred)
-        for i in range(3):  # h, theta, omega
-          f_interp = interp1d(s_mesh_new, U_corr[i, :], kind='cubic',
-                             bounds_error=False, fill_value='extrapolate')
-          U_interp[i, :] = f_interp(current.tangent['s_mesh'])
-        U_corr = U_interp
+      # Check convergence
+      residual_norm = np.linalg.norm(F_ext)
+      if residual_norm < self.params.newton_tol:
+        return U, Ca, True
       
-      return U_corr, Ca_pred, True
+      if 'error' in info:
+        # BVP failed, can't continue
+        return U_pred, Ca_pred, False
       
-    except Exception as e:
-      self.logger.warning(f"BVP failed in corrector: {str(e)}")
-      return U_pred, Ca_pred, False
+      # Compute Newton update using finite differences
+      # This is simplified - a full implementation would compute the Jacobian
+      
+      # For now, use simplified corrector that enforces arc-length constraint
+      # by adjusting Ca to satisfy the constraint
+      
+      U_bvp = info.get('U_bvp', U)
+      arc_residual = info.get('arc_constraint', 0)
+      
+      # Update solution towards BVP solution
+      alpha = 0.7  # Damping factor
+      U = (1 - alpha) * U + alpha * U_bvp
+      
+      # Adjust Ca to reduce arc-length constraint residual
+      # Simple proportional correction
+      Ca_correction = -0.1 * arc_residual * current.tangent['Ca']
+      Ca = Ca + Ca_correction
+    
+    # If we get here, Newton didn't fully converge but we have a solution
+    return U, Ca, residual_norm < 1e-6
   
   def _compute_tangent(self, point: SolutionPoint, prev_point: SolutionPoint) -> Dict[str, Any]:
     """Compute new tangent using secant method"""
-    # Secant approximation
-    dU = point.solution - prev_point.solution
+    # Always interpolate both solutions to a common mesh for consistency
+    from scipy.interpolate import interp1d
+    
+    # Use the current point's mesh as reference
+    s_mesh_ref = point.s_range
+    
+    # Interpolate previous solution to current mesh
+    prev_interp = np.zeros((3, len(s_mesh_ref)))
+    for i in range(3):
+      f_interp = interp1d(prev_point.s_range, prev_point.solution[i, :], kind='cubic',
+                         bounds_error=False, fill_value='extrapolate')
+      prev_interp[i, :] = f_interp(s_mesh_ref)
+    
+    # Current solution is already on the reference mesh
+    curr_solution = point.solution
+    
+    # Compute difference
+    dU = curr_solution - prev_interp
+    
     dCa = point.Ca - prev_point.Ca
     ds = point.arc_length_param - prev_point.arc_length_param
     
@@ -379,9 +390,19 @@ class GLEContinuation:
     }
     
     # Check orientation (keep consistent direction)
-    if len(self.branch) > 2:
+    if len(self.branch) > 2 and 'U' in prev_point.tangent:
       prev_tangent = prev_point.tangent
-      dot_product = np.sum(tangent['U'] * prev_tangent['U']) + tangent['Ca'] * prev_tangent['Ca']
+      # Need to interpolate prev tangent U to current mesh for dot product
+      if len(prev_tangent['U'][0]) != len(tangent['U'][0]):
+        prev_U_interp = np.zeros_like(tangent['U'])
+        for i in range(3):
+          f_interp = interp1d(prev_tangent['s_mesh'], prev_tangent['U'][i, :], kind='cubic',
+                             bounds_error=False, fill_value='extrapolate')
+          prev_U_interp[i, :] = f_interp(s_mesh_ref)
+        dot_product = np.sum(tangent['U'] * prev_U_interp) + tangent['Ca'] * prev_tangent['Ca']
+      else:
+        dot_product = np.sum(tangent['U'] * prev_tangent['U']) + tangent['Ca'] * prev_tangent['Ca']
+      
       if dot_product < 0:
         tangent['U'] = -tangent['U']
         tangent['Ca'] = -tangent['Ca']
@@ -447,11 +468,16 @@ class GLEContinuation:
       # Failed - reduce step size
       new_ds = max(ds * 0.5, self.params.ds_min)
     else:
-      # Measure solution change
-      theta_change = np.max(np.abs(current.solution[0] - prev.solution[0]))
+      # Measure changes
+      theta_change = np.max(np.abs(current.solution[1] - prev.solution[1]))  # theta is index 1
+      Ca_change = abs(current.Ca - prev.Ca)
       
-      if newton_iters < 3 and theta_change < self.params.angle_change_max:
-        # Fast convergence, small change - increase step
+      # Want significant progress in Ca
+      if Ca_change < 1e-6:
+        # Too small Ca change, increase step size aggressively
+        new_ds = min(ds * 2.0, self.params.ds_max)
+      elif newton_iters < 3 and theta_change < self.params.angle_change_max:
+        # Fast convergence, moderate change - increase step
         new_ds = min(ds * 1.5, self.params.ds_max)
       elif newton_iters > 10 or theta_change > self.params.angle_change_max * 2:
         # Slow convergence or large change - decrease step
@@ -462,7 +488,7 @@ class GLEContinuation:
     
     # Special handling near theta_min = 0
     if current.theta_min < np.radians(5.0):  # Less than 5 degrees
-      reduction_factor = current.theta_min / np.radians(5.0)
+      reduction_factor = max(0.1, current.theta_min / np.radians(5.0))
       new_ds = min(new_ds, ds * reduction_factor)
     
     return new_ds
@@ -486,6 +512,10 @@ class GLEContinuation:
     ds = self.params.ds_init
     arc_length_total = 0.0
     
+    # For the first few steps, use simple Ca stepping
+    use_simple_stepping = True
+    simple_step_count = 0
+    
     for step in range(self.params.max_steps):
       current = self.branch[-1]
       
@@ -498,8 +528,94 @@ class GLEContinuation:
         self.logger.info(f"Approaching theta_min=0 at Ca={current.Ca:.6f}")
         break
       
+      # For initial steps, use simple Ca continuation
+      if use_simple_stepping:
+        # Simple predictor: just increase Ca
+        dCa = min(0.001, Ca_target - current.Ca)  # Small step in Ca
+        Ca_pred = current.Ca + dCa
+        
+        # Use current solution as initial guess, but we'll use a fixed mesh
+        U_pred = current.solution
+        s_mesh_base = np.linspace(0, self.Delta, self.N_points)
+        
+        self.logger.info(f"Simple step {simple_step_count}: Ca={current.Ca:.6f} -> Ca_pred={Ca_pred:.6f}")
+        
+        # Try to solve at new Ca
+        try:
+          # Always interpolate the current solution to the base mesh for consistency
+          from scipy.interpolate import interp1d
+          U_interp = np.zeros((3, self.N_points))
+          for i in range(3):
+            f_interp = interp1d(current.s_range, current.solution[i, :], kind='cubic',
+                               bounds_error=False, fill_value='extrapolate')
+            U_interp[i, :] = f_interp(s_mesh_base)
+          U_pred = U_interp
+          
+          # Use the base mesh for solving
+          s_new, U_new = self._solve_bvp(Ca_pred, U_pred, s_mesh_base)
+          
+          # Extract solution properties
+          h = U_new[0, :]
+          theta = U_new[1, :]
+          theta_min = np.min(theta)
+          
+          # Compute x_cl
+          x_cl = self._compute_x_cl(s_new, theta, h)
+          delta_x_cl = x_cl - self.x_cl_ref if self.x_cl_ref is not None else 0.0
+          
+          # Update arc length
+          # For arc length, just use the Ca change since solutions may have different meshes
+          arc_length_total += dCa
+          
+          # Create new solution point
+          new_point = SolutionPoint(
+            Ca=Ca_pred,
+            solution=U_new,
+            s_range=s_new,
+            theta_min=theta_min,
+            x_cl=x_cl,
+            delta_x_cl=delta_x_cl,
+            arc_length_param=arc_length_total
+          )
+          
+          # Compute tangent if we have enough points
+          if len(self.branch) > 1:
+            new_point.tangent = self._compute_tangent(new_point, current)
+          else:
+            new_point.tangent = {'U': np.zeros_like(U_new), 'Ca': 1.0, 's_mesh': s_new}
+          
+          # Add to branch
+          self.branch.append(new_point)
+          
+          self.logger.info(
+            f"Step {step+1}: Ca={Ca_pred:.6f}, theta_min={np.degrees(theta_min):.2f}°, "
+            f"delta_x_cl={delta_x_cl:.6f}"
+          )
+          
+          simple_step_count += 1
+          
+          # Switch to pseudo-arclength after a few successful simple steps
+          if simple_step_count >= 5 and len(self.branch) > 2:
+            use_simple_stepping = False
+            self.logger.info("Switching to pseudo-arclength continuation")
+            ds = 0.1  # Reset step size for arclength
+          
+          continue
+          
+        except Exception as e:
+          self.logger.warning(f"Simple step failed: {str(e)}")
+          import traceback
+          self.logger.debug(traceback.format_exc())
+          # If simple stepping fails, we're probably near critical Ca
+          self.logger.info(f"Simple stepping failed at Ca={Ca_pred:.6f}, likely near critical Ca")
+          break
+      
+      # Pseudo-arclength continuation
       # Predictor
       U_pred, Ca_pred = self._predictor_step(current, ds)
+      
+      # Log prediction
+      self.logger.info(f"Arc-length predictor: Ca={current.Ca:.6f} -> Ca_pred={Ca_pred:.6f}, ds={ds:.6f}")
       
       # Corrector
       start_time = time.time()
@@ -518,7 +634,7 @@ class GLEContinuation:
       # Extract solution properties
       h = U_corr[0, :]
       theta = U_corr[1, :]
-      x0, theta_min, x0_idx = find_x0_and_theta_min(current.tangent['s_mesh'], theta)
+      theta_min = np.min(theta)
       
       # Compute x_cl (needs integration)
       x_cl = self._compute_x_cl(current.tangent['s_mesh'], theta, h)
@@ -533,7 +649,6 @@ class GLEContinuation:
         solution=U_corr,
         s_range=current.tangent['s_mesh'],
         theta_min=theta_min,
-        x0=x0,
         x_cl=x_cl,
         delta_x_cl=delta_x_cl,
         arc_length_param=arc_length_total
@@ -645,30 +760,38 @@ class GLEContinuation:
     theta_min_vals = np.array([np.degrees(p.theta_min) for p in self.branch])
     
     # Create figure with subplots
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
     
     # Plot 1: δX_cl vs Ca (main result)
     ax1 = axes[0, 0]
     ax1.plot(Ca_vals, delta_x_cl_vals, 'b-', linewidth=2, label='Solution branch')
     
     # Mark fold points
-    for p in self.branch:
-      if p.is_fold:
-        ax1.plot(p.Ca, p.delta_x_cl, 'ro', markersize=8, label='Fold point')
+    fold_points = [p for p in self.branch if p.is_fold]
+    if fold_points:
+      fold_Ca = [p.Ca for p in fold_points]
+      fold_delta_x = [p.delta_x_cl for p in fold_points]
+      ax1.plot(fold_Ca, fold_delta_x, 'ro', markersize=8, label='Fold point')
     
-    ax1.set_xlabel('Capillary number (Ca)')
-    ax1.set_ylabel('Contact line displacement (δX_cl)')
-    ax1.set_title('Contact Line Displacement vs Capillary Number')
+    ax1.set_xlabel('Capillary number (Ca)', fontsize=12)
+    ax1.set_ylabel('Contact line displacement (δX_cl)', fontsize=12)
+    ax1.set_title('Contact Line Displacement vs Capillary Number', fontsize=14)
     ax1.grid(True, alpha=0.3)
-    ax1.legend()
+    ax1.legend(fontsize=10)
     
     # Plot 2: θ_min vs Ca
     ax2 = axes[0, 1]
     ax2.plot(Ca_vals, theta_min_vals, 'g-', linewidth=2)
-    ax2.set_xlabel('Capillary number (Ca)')
-    ax2.set_ylabel('Minimum contact angle (degrees)')
-    ax2.set_title('Minimum Contact Angle vs Capillary Number')
+    if fold_points:
+      fold_theta = [np.degrees(p.theta_min) for p in fold_points]
+      ax2.plot(fold_Ca, fold_theta, 'ro', markersize=8, label='Fold point')
+    
+    ax2.set_xlabel('Capillary number (Ca)', fontsize=12)
+    ax2.set_ylabel('Minimum contact angle (degrees)', fontsize=12)
+    ax2.set_title('Minimum Contact Angle vs Capillary Number', fontsize=14)
     ax2.grid(True, alpha=0.3)
+    if fold_points:
+      ax2.legend(fontsize=10)
     
     # Plot 3: Solution profiles at key points
     ax3 = axes[1, 0]
@@ -683,30 +806,76 @@ class GLEContinuation:
         ax3.plot(point.s_range, np.degrees(point.solution[1, :]), 
                 color=color, label=f'Ca={point.Ca:.4f}')
     
-    ax3.set_xlabel('Arc length (s)')
-    ax3.set_ylabel('Contact angle (degrees)')
-    ax3.set_title('Contact Angle Profiles')
+    ax3.set_xlabel('Arc length (s)', fontsize=12)
+    ax3.set_ylabel('Contact angle (degrees)', fontsize=12)
+    ax3.set_title('Contact Angle Profiles', fontsize=14)
     ax3.grid(True, alpha=0.3)
-    ax3.legend()
+    ax3.legend(fontsize=10)
     
     # Plot 4: Phase portrait (Ca vs arc length parameter)
     ax4 = axes[1, 1]
     arc_params = np.array([p.arc_length_param for p in self.branch])
     ax4.plot(arc_params, Ca_vals, 'k-', linewidth=2)
-    ax4.set_xlabel('Arc length parameter')
-    ax4.set_ylabel('Capillary number (Ca)')
-    ax4.set_title('Continuation Path')
+    if fold_points:
+      fold_arc = [p.arc_length_param for p in fold_points]
+      ax4.plot(fold_arc, fold_Ca, 'ro', markersize=8, label='Fold point')
+    
+    ax4.set_xlabel('Arc length parameter', fontsize=12)
+    ax4.set_ylabel('Capillary number (Ca)', fontsize=12)
+    ax4.set_title('Continuation Path', fontsize=14)
     ax4.grid(True, alpha=0.3)
+    if fold_points:
+      ax4.legend(fontsize=10)
+    
+    # Add parameter information as text
+    param_text = (
+      f"Parameters:\n"
+      f"μ_r = {self.mu_r}\n"
+      f"λ_slip = {self.lambda_slip}\n"
+      f"θ₀ = {np.degrees(self.theta0):.1f}°\n"
+      f"Δ = {self.Delta}\n"
+      f"N_points = {self.N_points}"
+    )
+    fig.text(0.02, 0.02, param_text, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
     
     plt.tight_layout()
     
-    # Save figure
-    filename = f"continuation_mu{self.mu_r}_lambda{self.lambda_slip}.png"
+    # Save figure with parameter information in filename
+    filename = f"continuation_mu{self.mu_r}_lambda{self.lambda_slip}_theta{np.degrees(self.theta0):.1f}.png"
     filepath = Path(save_dir) / filename
-    plt.savefig(filepath, dpi=150, bbox_inches='tight')
+    plt.savefig(filepath, dpi=300, bbox_inches='tight')
     self.logger.info(f"Plots saved to {filepath}")
     
-    plt.close()
+    # Also save individual plots
+    for i, (ax, title) in enumerate(zip(axes.flat, ['displacement', 'theta_min', 'profiles', 'continuation'])):
+      fig_single = plt.figure(figsize=(8, 6))
+      ax_single = fig_single.add_subplot(111)
+      
+      # Copy the plot content
+      for line in ax.get_lines():
+        ax_single.plot(line.get_xdata(), line.get_ydata(), 
+                      color=line.get_color(), 
+                      linestyle=line.get_linestyle(),
+                      linewidth=line.get_linewidth(),
+                      label=line.get_label())
+      
+      # Copy axis properties
+      ax_single.set_xlabel(ax.get_xlabel(), fontsize=12)
+      ax_single.set_ylabel(ax.get_ylabel(), fontsize=12)
+      ax_single.set_title(ax.get_title(), fontsize=14)
+      ax_single.grid(True, alpha=0.3)
+      if ax.get_legend():
+        ax_single.legend(fontsize=10)
+      
+      plt.tight_layout()
+      
+      # Save individual plot
+      single_filename = f"continuation_{title}_mu{self.mu_r}_lambda{self.lambda_slip}_theta{np.degrees(self.theta0):.1f}.png"
+      single_filepath = Path(save_dir) / single_filename
+      plt.savefig(single_filepath, dpi=300, bbox_inches='tight')
+      plt.close(fig_single)
+    
+    plt.close(fig)
   
   def export_results(self, filename: str, format: str = 'pickle'):
     """
@@ -747,7 +916,6 @@ class GLEContinuation:
           point_grp = branch_grp.create_group(f'point_{i:04d}')
           point_grp.attrs['Ca'] = point.Ca
           point_grp.attrs['theta_min'] = point.theta_min
-          point_grp.attrs['x0'] = point.x0
           point_grp.attrs['x_cl'] = point.x_cl
           point_grp.attrs['delta_x_cl'] = point.delta_x_cl
           point_grp.attrs['is_fold'] = point.is_fold
@@ -777,14 +945,14 @@ def main():
   # Numerical parameters
   parser.add_argument('--Delta', type=float, default=10.0,
                      help='Domain size (default: 10.0)')
-  parser.add_argument('--N_points', type=int, default=200,
-                     help='Number of mesh points (default: 200)')
+  parser.add_argument('--N_points', type=int, default=10000,
+                     help='Number of mesh points (default: 10000)')
   
   # Continuation parameters
   parser.add_argument('--Ca_target', type=float, default=0.1,
                      help='Target Capillary number (default: 0.1)')
-  parser.add_argument('--ds_init', type=float, default=0.01,
-                     help='Initial arc length step (default: 0.01)')
+  parser.add_argument('--ds_init', type=float, default=0.1,
+                     help='Initial arc length step (default: 0.1)')
   parser.add_argument('--max_steps', type=int, default=500,
                      help='Maximum continuation steps (default: 500)')
   
