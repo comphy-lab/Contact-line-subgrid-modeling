@@ -125,7 +125,7 @@ Thumbs.db
 cache/
 *.log
 *.tmp
-
+**/*.pkl
 
 # Explicitly allow Claude files
 !.claude/
