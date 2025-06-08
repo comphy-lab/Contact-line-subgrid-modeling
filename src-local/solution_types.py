@@ -11,7 +11,8 @@ class SolutionResult:
     success: bool
     solution: Optional[Any] = None
     theta_min: Optional[float] = None
-    x0: Optional[float] = None
+    x0: Optional[float] = None  # x-position where theta is minimum
+    X_cl: Optional[float] = None  # contact line position (x at end of domain)
     s_range: Optional[Any] = None
     y_guess: Optional[Any] = None
     Ca: Optional[float] = None

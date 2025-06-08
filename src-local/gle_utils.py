@@ -12,7 +12,7 @@ from typing import Tuple, Optional, Any
 from dataclasses import dataclass
 
 from solution_types import SolutionResult
-from find_x0_utils import find_x0_and_theta_min
+from find_x0_utils import find_x0_and_theta_min, find_X_cl
 
 
 # Mathematical functions for GLE
@@ -137,6 +137,7 @@ def solve_single_ca(Ca: float, mu_r: float, lambda_slip: float, theta0: float,
                     solution=None,
                     theta_min=None,
                     x0=None,
+                    X_cl=None,
                     s_range=s_range,
                     y_guess=y_guess,
                     Ca=Ca,
@@ -150,6 +151,7 @@ def solve_single_ca(Ca: float, mu_r: float, lambda_slip: float, theta0: float,
                     solution=None,
                     theta_min=None,
                     x0=None,
+                    X_cl=None,
                     s_range=s_range,
                     y_guess=y_guess,
                     Ca=Ca,
@@ -159,11 +161,15 @@ def solve_single_ca(Ca: float, mu_r: float, lambda_slip: float, theta0: float,
             # Find x0 (position where theta reaches its minimum) and theta_min
             x0, theta_min, x0_idx = find_x0_and_theta_min(solution.x, theta_vals)
             
+            # Find X_cl (contact line position - x at end of domain)
+            X_cl = find_X_cl(solution.x, theta_vals)
+            
             return SolutionResult(
                 success=True,
                 solution=solution,
                 theta_min=theta_min,
                 x0=x0,
+                X_cl=X_cl,
                 s_range=solution.x,
                 y_guess=solution.y,
                 Ca=Ca

@@ -67,3 +67,33 @@ def find_x0_and_theta_min(s_vals: np.ndarray, theta_vals: np.ndarray,
     x0, x0_idx, theta_min = find_x0_from_solution(s_vals, theta_vals, tolerance)
     
     return x0, theta_min, x0_idx
+
+
+def find_X_cl(s_vals: np.ndarray, theta_vals: np.ndarray) -> float:
+    """
+    Find X_cl - the contact line position (maximum x value).
+    
+    X_cl is the x-coordinate at the end of the domain, representing
+    the contact line position in the lubrication approximation.
+    
+    Args:
+        s_vals: Arc length values
+        theta_vals: Contact angle values in radians
+    
+    Returns:
+        X_cl: Contact line position (x at s=Delta)
+    """
+    # Calculate x values by integrating cos(theta)
+    x_vals = np.zeros_like(s_vals)
+    if len(s_vals) > 1:
+        # Use trapezoidal integration for better accuracy
+        for i in range(1, len(s_vals)):
+            ds = s_vals[i] - s_vals[i-1]
+            # Average cos(theta) over the interval
+            cos_avg = 0.5 * (np.cos(theta_vals[i-1]) + np.cos(theta_vals[i]))
+            x_vals[i] = x_vals[i-1] + ds * cos_avg
+    
+    # X_cl is the maximum x value (at the end of the domain)
+    X_cl = x_vals[-1]
+    
+    return X_cl
