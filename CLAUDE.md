@@ -17,28 +17,52 @@ This repository contains Python implementations for contact line subgrid modelin
 ## Key Components
 
 ### GLE_solver.py
-- Solves coupled ODEs for contact line dynamics using the Generalized Lubrication Equations
-- Uses scipy's solve_bvp with optimized parallel bisection refinement
+- Simple solver for the Generalized Lubrication Equations
+- Attempts to solve for a given Capillary number (Ca)
+- If solution fails (Ca > Ca_critical), suggests using critical Ca finders
+- Key functions:
+  - `solve_gle()`: Main solver function
+  - `create_solution_plots()`: Visualization of successful solutions
+- Uses scipy's solve_bvp with standard settings
+
+### GLE_criticalCa.py
+- Finds the critical Capillary number (Ca_cr) where solutions cease to exist
+- Uses a hybrid refinement approach: IQI/Newton/bisection methods
 - Key functions:
   - `f1(theta)`, `f2(theta)`, `f3(theta)`: Helper functions for the GLE formulation
   - `f(theta, mu_r)`: Main function combining the helpers with viscosity ratio mu_r
   - `GLE(s, y, Ca, mu_r, lambda_slip)`: System of ODEs defining the contact line shape evolution
-  - `find_critical_ca_lower_branch()`: Continuation method to find critical Capillary number
-  - `adaptive_bisection_refinement()`: Parallel bisection with adaptive tolerances
-- Features adaptive mesh refinement, solution caching, and automatic Ca_cr detection
+  - `find_critical_ca_lower_branch()`: Two-stage method to find critical Capillary number
+  - `hybrid_iqi_newton_refinement()`: Advanced refinement using multiple methods
+- Features adaptive tolerance, solution interpolation, and automatic convergence detection
 
-### GLE_critical_ca_advanced.py
-- Advanced critical Ca finder using a three-phase approach
-- More robust than the basic finder in GLE_solver.py
-- Three phases:
-  - Phase 0: Initial estimate using coarse search + IQI refinement (from GLE_solver)
-  - Phase 1: Adaptive solution tracking to approach θ_min ≈ 0
-  - Phase 2: High-precision root finding for final refinement
-- Key classes and functions:
-  - `AdaptiveSolutionTracker`: Tracks full solution vector with arc-length-like stepping
-  - `find_critical_ca_advanced()`: Main function implementing the three-phase approach
-  - `analyze_solution_properties()`: Solution analysis for debugging
+### GLE_criticalCa_advanced.py
+- Advanced critical Ca finder with enhanced algorithms
+- More robust and accurate than the basic finder in GLE_criticalCa.py
+- Features:
+  - Adaptive mesh refinement based on solution properties
+  - Optimized search strategy
+- Key functions:
+  - `find_critical_ca_advanced()`: Main function with adaptive refinement
+  - `analyze_solution_properties()`: Solution analysis for mesh adaptation
+  - Uses enhanced Phase 0 from GLE_criticalCa with improvements
 - NOTE: This is NOT a continuation method - it specifically finds Ca_critical
+
+### GLE_continuation_hybrid.py
+- Implements full pseudo-arclength continuation for tracking δX_cl vs Ca
+- Key features:
+  - Tracks contact line displacement δX_cl = X_cl(Ca) - X_cl(Ca=0)
+  - Uses predictor-corrector with extended system
+  - Automatic fold detection and branch switching capability
+  - Adaptive step size control
+  - Comprehensive analysis and visualization
+- Key functions:
+  - `GLEContinuation`: Main class implementing continuation
+  - `pseudo_arclength_continuation()`: Main continuation loop
+  - `_build_extended_system()`: Extended system for arc-length constraint
+  - `_detect_fold()`: Fold point detection
+  - `analyze_branch()`: Branch analysis including fold identification
+- Outputs complete branch data in .pkl or .h5 format
 
 ### huh_scriven_velocity.py
 - Analyzes the Huh-Scriven velocity field near moving contact lines
@@ -48,11 +72,17 @@ This repository contains Python implementations for contact line subgrid modelin
 ## Development Commands
 
 ```bash
-# Run the GLE solver (finds critical Ca for lower branch)
-python GLE_solver.py --ca 0.05 --mu_r 1e-6 --lambda_slip 1e-4
+# Run the simple GLE solver (for Ca < Ca_critical)
+python GLE_solver.py --ca 0.01 --mu_r 1e-6 --lambda_slip 1e-4
 
-# Run the advanced critical Ca finder
-python GLE_critical_ca_advanced.py --mu_r 1e-6 --lambda_slip 1e-4
+# Find the critical Ca using standard method
+python GLE_criticalCa.py --ca 0.05 --mu_r 1e-6 --lambda_slip 1e-4
+
+# Find the critical Ca using advanced method with adaptive mesh
+python GLE_criticalCa_advanced.py --mu_r 1e-6 --lambda_slip 1e-4
+
+# Run pseudo-arclength continuation to track δX_cl vs Ca
+python GLE_continuation_hybrid.py --mu_r 1.0 --lambda_slip 1e-4 --theta0 10 --Ca_target 0.1
 
 # Run the Huh-Scriven velocity analysis
 python huh_scriven_velocity.py
@@ -80,11 +110,12 @@ The system exhibits a bifurcation structure with:
 
 ## Important Notes
 
-- The GLE_solver.py automatically finds Ca_critical when requested Ca exceeds it
-- GLE_critical_ca_advanced.py provides more robust critical Ca finding with three-phase approach
+- GLE_solver.py is for solving at a specific Ca value (when Ca < Ca_critical)
+- GLE_criticalCa.py finds Ca_critical using hybrid IQI/Newton/bisection refinement
+- GLE_criticalCa_advanced.py provides more robust critical Ca finding with adaptive mesh refinement
 - Default parameters (Delta=10, ngrid=10000) work well for most cases
 - For very small slip lengths (<1e-6), may need to increase grid resolution
-- The advanced finder uses adaptive stepping for robust convergence near critical points
+- The advanced finder uses adaptive mesh refinement for improved accuracy near critical points
 
 ## File Organization
 
@@ -103,18 +134,12 @@ from find_x0_utils import find_x0_and_theta_min
 
 ## Known Issues & Debugging
 
-### Phase 1 in GLE_critical_ca_advanced.py
-If Phase 1 (adaptive tracking) appears stuck:
-- You may be very close to the critical Ca
-- Solutions near θ_min = 0 are difficult to compute
-- Consider adjusting the initial step size (ds) or tolerance
-- Debug output tracks:
-  - Tangent computation status
-  - Predictor step values
-  - Corrector iteration progress
-
 ### Running Large Computations
 - Both GLE_solver.py and GLE_critical_ca_advanced.py can take significant time to run
 - For testing, use the test scripts in test/ folder instead of running directly
 - Monitor output for progress indicators
-- The advanced finder shows detailed progress through all three phases
+- The advanced finder shows detailed progress during execution
+
+### Mesh Refinement
+- If solutions are not converging well, GLE_critical_ca_advanced.py will automatically increase mesh density
+- You can disable adaptive mesh with `--no-adaptive-mesh` flag

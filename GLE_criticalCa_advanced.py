@@ -14,7 +14,7 @@ Note: This is NOT a continuation method - it specifically finds Ca_critical
 where θ_min → 0. A proper continuation method that traces the full bifurcation
 diagram will be implemented separately.
 
-Author: Vatsal Sanjay, Aman Bhargava
+Author: Vatsal and Aman
 Created: 2025
 """
 
