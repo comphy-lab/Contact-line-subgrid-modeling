@@ -378,14 +378,30 @@ class PseudoArclengthContinuation:
 
 
 if __name__ == '__main__':
+  import argparse
+  
+  parser = argparse.ArgumentParser(
+    description='Pseudo-arclength continuation for GLE (simplified version)'
+  )
+  parser.add_argument('--mu_r', type=float, default=1e-6,
+                      help='Viscosity ratio (default: 1e-6)')
+  parser.add_argument('--lambda_slip', type=float, default=1e-4,
+                      help='Slip length (default: 1e-4)')
+  parser.add_argument('--theta0', type=float, default=90,
+                      help='Initial contact angle in degrees (default: 90)')
+  parser.add_argument('--ca_start', type=float, default=0.01,
+                      help='Starting Ca value (default: 0.01)')
+  
+  args = parser.parse_args()
+  
   params = ContinuationParams(
-    mu_r=1e-6,
-    lambda_slip=1e-4,
-    theta0=np.pi/3,  # 60 degrees
+    mu_r=args.mu_r,
+    lambda_slip=args.lambda_slip,
+    theta0=np.radians(args.theta0),
     Delta=10.0
   )
   solver = ContinuationSolver(params)
-  branch = solver.solve_branch(0.01, direction=1, max_steps=100)
+  branch = solver.solve_branch(args.ca_start, direction=1, max_steps=100)
   print(f"\nCompleted {len(branch)} continuation steps")
   print("\nBranch summary:")
   for i, pt in enumerate(branch):
