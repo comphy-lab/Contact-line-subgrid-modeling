@@ -7,7 +7,38 @@ This document provides comprehensive documentation for the continuation methods 
 The continuation solvers track the relationship between the Capillary number (Ca) and the contact line displacement (δX_cl), revealing the bifurcation structure of the system. Two main implementations are provided:
 
 1. **GLE_continuation_v4.py**: Unified continuation solver with both pseudo-arclength and natural parameter methods
-2. **GLE_continuation_v4.5.py**: Extended pseudo-arclength solver with true arc-length constraints for tracing through folds
+2. **GLE_continuation_v4.5.py**: Extended pseudo-arclength solver with arc-length constraints (attempts to trace through folds)
+
+### Visual Comparison
+
+```
+v4 behavior:              v4.5 intended behavior:
+
+δX_cl                     δX_cl
+  ^                         ^
+  |    ___X (stops)         |    _____ (fold)
+  |   /                     |   /     \
+  | /                       | /       \ (unstable)
+  |/                        |/         \
+  +---------> Ca            +-----------> Ca
+       Ca_cr                      Ca_cr
+
+v4: Approaches fold         v4.5: Should trace S-curve
+    then stops              (but currently fails near fold)
+```
+
+### Quick Decision Tree
+
+```
+What do you need?
+│
+├─ Just find critical Ca? ──────────────→ Use v4 with --method natural
+│
+├─ See approach to fold? ───────────────→ Use v4 with --method arclength
+│
+└─ Want full S-curve? ──────────────────→ Try v4.5 (see limitations below)
+                                           └─ Currently fails near fold
+```
 
 ## Key Concepts
 
@@ -88,19 +119,21 @@ Where the arc-length constraint is:
 
 ### Algorithm Details
 
-1. **Extended system construction**:
-   - ODE residuals from GLE
-   - Boundary condition residuals
-   - Arc-length constraint equation
+**Note**: The current implementation uses a simplified approach:
+
+1. **Simplified arc-length constraint**:
+   - Uses scalar constraint on Ca only (not full extended system)
+   - Solves: `(Ca - Ca_ref)·τ_Ca + (X_cl - X_cl_ref)·τ_X = ds`
+   - Uses brentq/newton methods for robustness
 
 2. **Newton iteration**:
-   - Solves for Ca and solution y simultaneously
-   - Uses finite differences for Jacobian approximation
-   - Converges to solution satisfying arc-length constraint
+   - Finds Ca satisfying arc-length constraint
+   - Then solves BVP at that Ca
+   - Avoids mesh compatibility issues
 
 3. **Tangent computation**:
-   - Includes Ca, X_cl, and solution norm components
-   - Properly normalized for arc-length parameterization
+   - Uses only Ca and X_cl components (no solution norms)
+   - Simplified but more stable
 
 ### Usage
 
@@ -132,8 +165,12 @@ The v4.5 solver should produce:
 
 Both solvers generate:
 - **Bifurcation diagram**: PNG plot showing δX_cl vs Ca
+  - v4: `bifurcation_diagram_arclength.png` or `bifurcation_diagram_natural.png`
+  - v4.5: `bifurcation_diagram_extended.png`
 - **Data file**: Text file with Ca, X_cl, δX_cl, θ_min values
-- **Branch pickle**: Complete solution data for post-processing
+  - v4: `bifurcation_data_arclength.txt` or `bifurcation_data_natural.txt`
+  - v4.5: `bifurcation_data_extended.txt`
+- **Branch pickle**: Complete solution data for post-processing (in .gitignore)
 
 ## Physical Interpretation
 
@@ -154,17 +191,29 @@ Both solvers generate:
 - **Stuck at fold**: Expected behavior - use v4.5 for full curve
 - **Convergence failures**: Reduce initial_ds or increase tolerance
 
-### v4.5 Issues
-- **Newton iteration failures**: Extended system is more sensitive
-- **Slow convergence**: Normal due to coupled system size
-- **Memory issues**: Reduce max_nodes or use coarser initial mesh
+### v4.5 Issues and Limitations
+- **Cannot trace through fold**: Currently fails near the fold point
+- **No unstable branch capture**: Stops before reaching the upper branch
+- **Newton iteration failures**: Arc-length constraint becomes ill-conditioned near fold
+- **Known issues**: See [Issue #14](https://github.com/comphy-lab/Contact-line-subgrid-modeling/issues/14) and [Issue #16](https://github.com/comphy-lab/Contact-line-subgrid-modeling/issues/16)
+- **Current status**: v4.5 gets closer to Ca_cr than v4 but cannot continue past the fold
+
+**Note**: Full pseudo-arclength continuation through folds remains an open challenge for this system
 
 ## Recommendations
 
 1. **For critical Ca determination**: Use v4 with natural parameter method
-2. **For publication-quality bifurcation diagrams**: Use v4.5
-3. **For parameter studies**: Start with v4, use v4.5 for selected cases
-4. **For debugging**: v4 is easier to understand and modify
+2. **For approaching the fold**: Use v4 with arclength method
+3. **For attempting full curve**: Try v4.5 but expect it to fail near fold
+4. **For parameter studies**: Use v4 (more reliable)
+5. **For debugging**: v4 is easier to understand and modify
+
+## Computation Time Expectations
+
+- **v4 natural parameter**: Typically completes in 10-30 seconds
+- **v4 pseudo-arclength**: Typically completes in 30-60 seconds
+- **v4.5 extended**: May take 1-5 minutes before failing near fold
+- Times increase with smaller slip lengths or finer meshes
 
 ## References
 

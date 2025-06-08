@@ -66,19 +66,18 @@ This repository contains Python implementations for contact line subgrid modelin
 - Best for: Finding critical Ca and stable branch analysis
 
 ### GLE_continuation_v4.5.py
-- Extended pseudo-arclength continuation with true arc-length constraints
+- Extended pseudo-arclength continuation attempting to trace through folds
 - Key features:
-  - Solves extended system with coupled Ca and solution variables
-  - Traces through fold bifurcations to capture unstable branches
-  - Creates S-shaped bifurcation curves
-  - Newton iteration on extended system
-  - Full arc-length parameterization
+  - Implements arc-length constraint (simplified scalar approach)
+  - Attempts to trace through fold bifurcations
+  - Gets closer to Ca_critical than v4
+  - Currently fails near fold point (cannot capture unstable branch)
 - Key functions:
   - `GLEContinuationExtended`: Main class for extended method
-  - `extended_system()`: Constructs full system with arc-length constraint
-  - `newton_extended()`: Newton solver for coupled system
-  - `compute_tangent()`: Normalized tangent including solution components
-- Best for: Complete bifurcation analysis with stable and unstable branches
+  - `newton_extended()`: Scalar Newton solver for arc-length constraint
+  - `compute_tangent()`: Normalized tangent using Ca and X_cl only
+- Current limitations: Cannot successfully trace past fold to unstable branch
+- See issues #14 and #16 on GitHub for details
 
 ### huh_scriven_velocity.py
 - Analyzes the Huh-Scriven velocity field near moving contact lines
