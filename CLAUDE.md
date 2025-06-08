@@ -27,17 +27,18 @@ This repository contains Python implementations for contact line subgrid modelin
   - `adaptive_bisection_refinement()`: Parallel bisection with adaptive tolerances
 - Features adaptive mesh refinement, solution caching, and automatic Ca_cr detection
 
-### GLE_continuation_hybrid.py
-- Advanced bifurcation analysis tool that captures both solution branches
-- Uses hybrid approach combining two methods:
-  - Phase 1: x0 parameterization with parallel processing for lower branch
-  - Phase 2: Pseudo-arclength continuation for upper branch
+### GLE_critical_ca_advanced.py
+- Advanced critical Ca finder using a three-phase approach
+- More robust than the basic finder in GLE_solver.py
+- Three phases:
+  - Phase 0: Initial estimate using coarse search + IQI refinement (from GLE_solver)
+  - Phase 1: Adaptive solution tracking to approach θ_min ≈ 0
+  - Phase 2: High-precision root finding for final refinement
 - Key classes and functions:
-  - `PseudoArclengthContinuation`: Implements arc-length continuation
-  - `solve_for_x0_newton()`: Newton's method for x0-based continuation
-  - `worker_solve_x0()`: Parallel worker for efficient computation
-  - `trace_both_branches_hybrid()`: Main function orchestrating the hybrid approach
-- Generates complete bifurcation diagrams showing stable and unstable branches
+  - `AdaptiveSolutionTracker`: Tracks full solution vector with arc-length-like stepping
+  - `find_critical_ca_advanced()`: Main function implementing the three-phase approach
+  - `analyze_solution_properties()`: Solution analysis for debugging
+- NOTE: This is NOT a continuation method - it specifically finds Ca_critical
 
 ### huh_scriven_velocity.py
 - Analyzes the Huh-Scriven velocity field near moving contact lines
@@ -48,10 +49,10 @@ This repository contains Python implementations for contact line subgrid modelin
 
 ```bash
 # Run the GLE solver (finds critical Ca for lower branch)
-python GLE_solver.py --ca 0.05 --mu-r 1e-6 --lambda-slip 1e-4
+python GLE_solver.py --ca 0.05 --mu_r 1e-6 --lambda_slip 1e-4
 
-# Run the continuation solver (traces both branches)
-python GLE_continuation_hybrid.py --mu-r 1e-6 --lambda-slip 1e-4
+# Run the advanced critical Ca finder
+python GLE_critical_ca_advanced.py --mu_r 1e-6 --lambda_slip 1e-4
 
 # Run the Huh-Scriven velocity analysis
 python huh_scriven_velocity.py
@@ -80,10 +81,10 @@ The system exhibits a bifurcation structure with:
 ## Important Notes
 
 - The GLE_solver.py automatically finds Ca_critical when requested Ca exceeds it
-- GLE_continuation_hybrid.py can trace through turning points to capture upper branch
+- GLE_critical_ca_advanced.py provides more robust critical Ca finding with three-phase approach
 - Default parameters (Delta=10, ngrid=10000) work well for most cases
 - For very small slip lengths (<1e-6), may need to increase grid resolution
-- The hybrid solver uses parallel processing - adjust --workers based on your system
+- The advanced finder uses adaptive stepping for robust convergence near critical points
 
 ## File Organization
 
@@ -102,18 +103,18 @@ from find_x0_utils import find_x0_and_theta_min
 
 ## Known Issues & Debugging
 
-### Phase 2 in GLE_continuation_hybrid.py
-If Phase 2 (pseudo-arclength continuation) appears stuck:
-- The turning point is likely very close to the critical Ca
-- Solutions near the turning point are difficult to compute
+### Phase 1 in GLE_critical_ca_advanced.py
+If Phase 1 (adaptive tracking) appears stuck:
+- You may be very close to the critical Ca
+- Solutions near θ_min = 0 are difficult to compute
 - Consider adjusting the initial step size (ds) or tolerance
-- Debug output has been added to track progress:
+- Debug output tracks:
   - Tangent computation status
   - Predictor step values
   - Corrector iteration progress
 
 ### Running Large Computations
-- Both GLE_solver.py and GLE_continuation_hybrid.py can take significant time to run
+- Both GLE_solver.py and GLE_critical_ca_advanced.py can take significant time to run
 - For testing, use the test scripts in test/ folder instead of running directly
 - Monitor output for progress indicators
-- Use `--workers` flag to adjust parallel processing (default: 4 or CPU count)
+- The advanced finder shows detailed progress through all three phases
