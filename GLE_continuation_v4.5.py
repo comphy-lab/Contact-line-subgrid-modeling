@@ -93,6 +93,10 @@ class GLEContinuationExtended:
       
   def compute_solution_norm(self, sol1: np.ndarray, sol2: np.ndarray) -> float:
     """Compute norm between two solutions for arc-length constraint."""
+    # Ensure both solutions have the same shape
+    if sol1.shape != sol2.shape:
+      raise ValueError(f"Solution shapes don't match: {sol1.shape} vs {sol2.shape}")
+    
     # Use a weighted norm focusing on theta values
     diff = sol2 - sol1
     # Weight theta differences more heavily
@@ -100,114 +104,76 @@ class GLEContinuationExtended:
     weighted_diff = diff * weights[:, np.newaxis]
     return np.sqrt(np.sum(weighted_diff**2) / sol1.shape[1])
     
-  def extended_system(self, vars: np.ndarray, point_ref: ContinuationPoint, 
-                     ds: float, tangent: Dict) -> np.ndarray:
-    """
-    Extended system for pseudo-arclength continuation.
-    
-    Variables: [Ca, solution_coefficients...]
-    Returns residuals for: [BVP_residuals..., arc_length_constraint]
-    """
-    Ca = vars[0]
-    
-    # Reconstruct solution from variables
-    n_points = len(point_ref.solution.x)
-    y_flat = vars[1:3*n_points+1]
-    y_solution = y_flat.reshape((3, n_points))
-    
-    # Compute BVP residuals
-    residuals = []
-    
-    # ODE residuals
-    for i in range(1, n_points-1):
-      s = point_ref.solution.x[i]
-      y = y_solution[:, i]
-      dyds_computed = GLE(s, y, Ca, self.params.mu_r, self.params.lambda_slip)
-      
-      # Finite difference approximation
-      ds_forward = point_ref.solution.x[i+1] - s
-      ds_backward = s - point_ref.solution.x[i-1]
-      
-      dyds_fd = np.zeros(3)
-      for j in range(3):
-        dyds_fd[j] = (y_solution[j, i+1] - y_solution[j, i-1]) / (ds_forward + ds_backward)
-      
-      residuals.extend(dyds_computed - dyds_fd)
-    
-    # Boundary condition residuals
-    bc_residuals = boundary_conditions(
-      y_solution[:, 0], y_solution[:, -1], 
-      self.params.w_bc, self.params.theta0, self.params.lambda_slip
-    )
-    residuals.extend(bc_residuals)
-    
-    # Arc-length constraint
-    # Calculate X_cl for current solution
-    theta_vals = y_solution[1, :]
-    s_vals = point_ref.solution.x
-    x_vals = np.zeros_like(s_vals)
-    for i in range(1, len(s_vals)):
-      x_vals[i] = x_vals[i-1] + (s_vals[i] - s_vals[i-1]) * np.cos(theta_vals[i-1])
-    X_cl_current = x_vals[-1]
-    
-    # Arc-length constraint: dot product with tangent = ds
-    dCa = Ca - point_ref.Ca
-    dX_cl = X_cl_current - point_ref.X_cl
-    
-    arc_constraint = (dCa * tangent['Ca'] + dX_cl * tangent['X_cl']) - ds
-    residuals.append(arc_constraint)
-    
-    return np.array(residuals)
+  # Note: extended_system method removed - using simplified approach with scalar arc-length constraint
     
   def newton_extended(self, point_ref: ContinuationPoint, Ca_pred: float,
-                     y_pred: np.ndarray, ds: float, tangent: Dict) -> Optional[Tuple[float, np.ndarray]]:
+                     ds: float, tangent: Dict) -> Optional[float]:
     """
-    Newton iteration for the extended system.
+    Simplified Newton iteration for arc-length constraint on Ca only.
     """
-    # Initial guess
-    vars_init = np.zeros(1 + 3 * len(point_ref.solution.x))
-    vars_init[0] = Ca_pred
-    vars_init[1:] = y_pred.flatten()
-    
-    # Solve extended system
-    try:
-      sol = root(
-        lambda v: self.extended_system(v, point_ref, ds, tangent),
-        vars_init,
-        method='hybr',
-        options={'maxfev': self.params.max_newton_iter * len(vars_init)}
-      )
+    def constraint(Ca):
+      # Arc-length constraint: (Ca - Ca_ref) * tan_Ca + (X_cl - X_cl_ref) * tan_X = ds
+      # But we need X_cl(Ca), so solve at Ca first
+      s_guess = point_ref.solution.x
+      y_guess = point_ref.solution.y
       
-      if sol.success:
-        Ca_new = sol.x[0]
-        y_new = sol.x[1:].reshape((3, -1))
-        return Ca_new, y_new
-      else:
+      result = self.solve_bvp_at_ca(Ca, s_guess, y_guess)
+      if result is None:
+        return np.inf  # Return large residual if solution fails
+        
+      theta_vals = result.y[1, :]
+      X_cl = find_X_cl(result.x, theta_vals)
+      
+      # Arc-length constraint
+      dCa = Ca - point_ref.Ca
+      dX_cl = X_cl - point_ref.X_cl
+      residual = dCa * tangent['Ca'] + dX_cl * tangent['X_cl'] - ds
+      
+      return residual
+    
+    try:
+      # Use scalar root finding for the Ca that satisfies arc-length constraint
+      from scipy.optimize import brentq, newton
+      
+      # Try to bracket the root
+      Ca_lower = point_ref.Ca
+      Ca_upper = Ca_pred + 0.1 * abs(Ca_pred - point_ref.Ca)
+      
+      # First try Newton's method starting from prediction
+      try:
+        Ca_new = newton(constraint, Ca_pred, tol=1e-6, maxiter=10)
+        if abs(constraint(Ca_new)) < 1e-6:
+          return Ca_new
+      except:
+        pass
+        
+      # If Newton fails, try bracketing
+      try:
+        Ca_new = brentq(constraint, Ca_lower, Ca_upper, xtol=1e-6)
+        return Ca_new
+      except:
         return None
         
     except Exception as e:
       if self.params.verbose:
-        print(f"  Newton iteration failed: {e}")
+        print(f"  Extended Newton failed: {e}")
       return None
       
   def compute_tangent(self, p1: ContinuationPoint, p2: ContinuationPoint) -> Dict[str, float]:
-    """Compute normalized tangent vector."""
+    """Compute normalized tangent vector using only scalar quantities."""
     dCa = p2.Ca - p1.Ca
     dX_cl = p2.X_cl - p1.X_cl
     
-    # Include solution change in tangent norm
-    sol_norm = self.compute_solution_norm(p1.solution.y, p2.solution.y)
-    
-    # Normalize with all components
-    norm = np.sqrt(dCa**2 + dX_cl**2 + sol_norm**2)
+    # Use only Ca and X_cl for the tangent (no solution components)
+    # This avoids mesh compatibility issues
+    norm = np.sqrt(dCa**2 + dX_cl**2)
     
     if norm < 1e-12:
-      return {'Ca': 0.0, 'X_cl': 1.0, 'sol_norm': 0.0}
+      return {'Ca': 0.0, 'X_cl': 1.0}
       
     return {
       'Ca': dCa / norm,
-      'X_cl': dX_cl / norm,
-      'sol_norm': sol_norm / norm
+      'X_cl': dX_cl / norm
     }
     
   def initialize_continuation(self, Ca_start: float) -> List[ContinuationPoint]:
@@ -295,9 +261,9 @@ class GLEContinuationExtended:
       y_pred = current_point.solution.y.copy()
       
       # Extended corrector
-      result = self.newton_extended(current_point, Ca_pred, y_pred, ds, tangent)
+      Ca_new = self.newton_extended(current_point, Ca_pred, ds, tangent)
       
-      if result is None:
+      if Ca_new is None:
         consecutive_failures += 1
         # Reduce step size
         ds *= 0.5
@@ -309,18 +275,20 @@ class GLEContinuationExtended:
           print(f"  Reducing step size to {ds:.6f}")
         continue
       
-      consecutive_failures = 0
-      Ca_new, y_new = result
+      # Now solve at the corrected Ca
+      s_guess = current_point.solution.x
+      y_guess = current_point.solution.y
       
-      # Create solution object
-      sol_new = type('obj', (object,), {
-        'x': current_point.solution.x,
-        'y': y_new,
-        'success': True
-      })()
+      sol_new = self.solve_bvp_at_ca(Ca_new, s_guess, y_guess)
+      if sol_new is None:
+        consecutive_failures += 1
+        ds *= 0.5
+        continue
+        
+      consecutive_failures = 0
       
       # Extract properties
-      theta_vals = y_new[1, :]
+      theta_vals = sol_new.y[1, :]
       x0, theta_min, _ = find_x0_and_theta_min(sol_new.x, theta_vals)
       X_cl = find_X_cl(sol_new.x, theta_vals)
       
