@@ -1,13 +1,14 @@
 """
-Generalized Lubrication Equations (GLE) Solver with Critical Ca Finder
-======================================================================
+Generalized Lubrication Equations (GLE) Solver
+==============================================
 
 This module solves the coupled ODEs for contact line dynamics using the
-Generalized Lubrication Equations. It includes an optimized critical 
-Capillary number (Ca_cr) finder using parallel bisection refinement.
+Generalized Lubrication Equations. It provides a straightforward solver
+that attempts to find a solution for a given Capillary number (Ca).
 
-Note: This is NOT a continuation method - it uses a root-finding approach
-to locate the critical Ca where the solver fails to converge.
+If the solver fails (typically because Ca exceeds the critical value),
+it suggests using GLE_critical_ca.py or GLE_critical_ca_advanced.py
+to find the critical Ca.
 
 Author: Aman and Vatsal
 Created: 2025
@@ -20,409 +21,114 @@ import os
 import sys
 from functools import partial
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from typing import Tuple, List, Optional, Dict, Any
+from typing import Tuple, Optional
 import time
 
 # Import utilities from src-local
-import sys
 sys.path.append('src-local')
 from find_x0_utils import find_x0_and_theta_min
-from solution_types import SolutionResult, SolutionCache
 from gle_utils import (
-    solve_single_ca, GLE, boundary_conditions,
-    f1, f2, f3, f, get_adaptive_max_nodes
-)
-from ca_continuation_utils import (
-    get_decimal_places_from_tolerance,
-    get_adaptive_tolerance, interpolate_solution,
-    inverse_quadratic_interpolation, hybrid_iqi_newton_refinement,
-    find_critical_ca_lower_branch
+    GLE, boundary_conditions,
+    f1, f2, f3, f
 )
 
-# Default parameters (can be overridden via command line)
+# Default parameters
 DEFAULT_DELTA = 1e1  # Maximum s-value for the solver
-DEFAULT_CA = 0.0246  # Capillary number
+DEFAULT_CA = 0.01  # Capillary number (conservative default)
 DEFAULT_LAMBDA_SLIP = 1e-4  # Slip length
 DEFAULT_MU_R = 1e-6  # μ_g/μ_l
 DEFAULT_THETA0 = np.pi/2  # theta at s = 0
 DEFAULT_W = 0  # curvature boundary condition at s = Δ
-DEFAULT_NGRID_INIT = 10000  # Initial number of grid points
-DEFAULT_TOLERANCE = 1e-6  # Default tolerance for Ca_cr refinement
+DEFAULT_NGRID = 10000  # Number of grid points
+DEFAULT_TOLERANCE = 1e-6  # Solver tolerance
 
 
-def parallel_solve_multiple_ca(Ca_list: List[float], mu_r: float, lambda_slip: float, 
-                              theta0: float, w_bc: float, Delta: float,
-                              s_range_list: List[np.ndarray], y_guess_list: List[np.ndarray],
-                              tol_list: List[float], max_nodes_list: List[int],
-                              max_workers: int = 4) -> List[SolutionResult]:
+def solve_gle(Ca: float, mu_r: float, lambda_slip: float, theta0: float,
+              w_bc: float, Delta: float, ngrid: int = DEFAULT_NGRID,
+              tolerance: float = DEFAULT_TOLERANCE) -> Tuple[Optional[object], float]:
     """
-    Solve for multiple Ca values in parallel using threading.
-    
-    Returns:
-        List of SolutionResult objects sorted by Ca
-    """
-    with ThreadPoolExecutor(max_workers=min(len(Ca_list), max_workers)) as executor:
-        # Submit all tasks
-        futures = {}
-        for Ca, s_range, y_guess, tol, max_nodes in zip(
-            Ca_list, s_range_list, y_guess_list, tol_list, max_nodes_list
-        ):
-            future = executor.submit(
-                solve_single_ca, Ca, mu_r, lambda_slip, theta0, w_bc, Delta, 
-                s_range, y_guess, tol, max_nodes
-            )
-            futures[future] = Ca
-        
-        # Collect results
-        results = []
-        for future in as_completed(futures):
-            result = future.result()
-            results.append(result)
-    
-    return sorted(results, key=lambda x: x.Ca)
-
-# ============================================================================
-# Plotting Functions
-# ============================================================================
-
-def plot_ca_search_results(Ca_values: List[float], x0_values: List[float], 
-                         theta_min_values: List[float], output_dir: str = 'output',
-                         tolerance: float = 1e-6) -> None:
-    """Create plots showing theta_min vs Ca and x_0 vs Ca during critical Ca search (x0 is position where theta is minimum)."""
-    if not Ca_values:
-        return
-        
-    plt.style.use('seaborn-v0_8-darkgrid')
-    
-    # If x0_values is empty or all None, only plot theta_min
-    has_x0_data = x0_values and any(x is not None for x in x0_values)
-    
-    if has_x0_data:
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    else:
-        fig, ax1 = plt.subplots(1, 1, figsize=(8, 6))
-        ax2 = None
-    
-    # Convert theta_min to degrees
-    theta_min_deg = np.array(theta_min_values) * 180 / np.pi
-    
-    # Plot 1: theta_min vs Ca
-    ax1.scatter(Ca_values, theta_min_deg, s=50, alpha=0.7, color='darkred', 
-                edgecolors='black', linewidth=1)
-    ax1.plot(Ca_values, theta_min_deg, '-', color='crimson', linewidth=2, alpha=0.8)
-    ax1.set_xlabel('Ca (Capillary Number)', fontsize=12)
-    ax1.set_ylabel('$\\theta_{min}$ [degrees]', fontsize=12)
-    ax1.set_title('Minimum Contact Angle vs Capillary Number', fontsize=14, fontweight='bold')
-    ax1.grid(True, alpha=0.3)
-    ax1.axhline(y=0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
-    
-    if max(Ca_values) / min(Ca_values) > 100:
-        ax1.set_xscale('log')
-        ax1.set_xlabel('Ca (Capillary Number) [log scale]', fontsize=12)
-    
-    # Mark critical Ca on theta_min plot
-    Ca_cr = Ca_values[-1]
-    decimal_places = get_decimal_places_from_tolerance(tolerance)
-    ax1.axvline(x=Ca_cr, color='green', linestyle='--', linewidth=2, alpha=0.7, 
-                label=f'Ca_cr ≈ {Ca_cr:.{decimal_places}f} ± {tolerance}')
-    ax1.legend(fontsize=14)
-    
-    # Plot 2: x_0 vs Ca (only if x0 data exists)
-    if has_x0_data and ax2 is not None:
-        # Filter out None values for plotting
-        Ca_with_x0 = [Ca for Ca, x0 in zip(Ca_values, x0_values) if x0 is not None]
-        x0_filtered = [x0 for x0 in x0_values if x0 is not None]
-        
-        if Ca_with_x0 and x0_filtered:
-            ax2.scatter(Ca_with_x0, x0_filtered, s=50, alpha=0.7, color='darkblue', 
-                        edgecolors='black', linewidth=1)
-            ax2.plot(Ca_with_x0, x0_filtered, '-', color='blue', linewidth=2, alpha=0.8)
-            ax2.set_xlabel('Ca (Capillary Number)', fontsize=12)
-            ax2.set_ylabel('$x_0$ (Position at $\\theta_{min}$)', fontsize=12)
-            ax2.set_title('Position at Minimum Contact Angle vs Capillary Number', 
-                          fontsize=14, fontweight='bold')
-            ax2.grid(True, alpha=0.3)
-            
-            if max(Ca_with_x0) / min(Ca_with_x0) > 100:
-                ax2.set_xscale('log')
-                ax2.set_xlabel('Ca (Capillary Number) [log scale]', fontsize=12)
-            
-            ax2.axvline(x=Ca_cr, color='green', linestyle='--', linewidth=2, alpha=0.7,
-                        label=f'Ca_cr ≈ {Ca_cr:.{decimal_places}f} ± {tolerance}')
-            ax2.legend(fontsize=14)
-    
-    plt.suptitle('Critical Ca Search Results', fontsize=16, fontweight='bold')
-    plt.tight_layout()
-    
-    # Save the plot
-    plot_path = os.path.join(output_dir, 'pyGLE_Ca_cr.png')
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f"Critical Ca search results plot saved to: {plot_path}")
-    
-    # Save data to CSV
-    if has_x0_data:
-        # Include x0 values, replacing None with NaN
-        x0_for_csv = [x if x is not None else np.nan for x in x0_values]
-        csv_data = np.column_stack((Ca_values, theta_min_values, theta_min_deg, x0_for_csv))
-        csv_path = os.path.join(output_dir, 'pyGLE_ca_search.csv')
-        np.savetxt(csv_path, csv_data, delimiter=',', 
-                   header='Ca,theta_min_rad,theta_min_deg,x0', comments='')
-    else:
-        # No x0 data
-        csv_data = np.column_stack((Ca_values, theta_min_values, theta_min_deg))
-        csv_path = os.path.join(output_dir, 'pyGLE_ca_search.csv')
-        np.savetxt(csv_path, csv_data, delimiter=',', 
-                   header='Ca,theta_min_rad,theta_min_deg', comments='')
-    print(f"Critical Ca search data saved to: {csv_path}")
-
-def setup_initial_guess(Delta: float, nGridInit: int, lambda_slip: float, 
-                       theta0: float) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Create initial guess for the BVP solver.
+    Solve the GLE for given parameters.
     
     Args:
-        Delta: Maximum s-value
-        nGridInit: Number of grid points
+        Ca: Capillary number
+        mu_r: Viscosity ratio (μ_g/μ_l)
         lambda_slip: Slip length
         theta0: Initial contact angle
+        w_bc: Curvature boundary condition at s=Delta
+        Delta: Maximum s-value
+        ngrid: Number of grid points
+        tolerance: Solver tolerance
         
     Returns:
-        (s_range, y_guess): Grid and initial guess arrays
+        (solution, solve_time): BVP solution object and time taken
     """
-    s_range = np.linspace(0, Delta, nGridInit)
-    y_guess = np.zeros((3, s_range.size))
-    # Use a more physical initial guess for h
-    # h grows from lambda_slip following approximately h ~ s for small s
+    print(f"\nSolving GLE with Ca = {Ca:.6f}, mu_r = {mu_r:.2e}, lambda_slip = {lambda_slip:.2e}")
+    
+    # Setup grid and initial guess
+    s_range = np.linspace(0, Delta, ngrid)
+    y_guess = np.zeros((3, ngrid))
+    # Physical initial guess for h
     y_guess[0, :] = lambda_slip + s_range * np.sin(theta0)
     y_guess[1, :] = theta0
     y_guess[2, :] = 0
     
-    return s_range, y_guess
-
-
-def attempt_direct_solve(Ca: float, mu_r: float, lambda_slip: float, theta0: float,
-                        w: float, Delta: float, s_range: np.ndarray, 
-                        y_guess: np.ndarray) -> Tuple[SolutionResult, float]:
-    """
-    Attempt to solve directly at the requested Ca.
+    # Create partial functions with parameters
+    GLE_with_params = partial(GLE, Ca=Ca, mu_r=mu_r, lambda_slip=lambda_slip)
+    bc_with_params = partial(boundary_conditions, w_bc=w_bc, theta0=theta0, lambda_slip=lambda_slip)
     
-    Returns:
-        (result, time_elapsed): Solution result and time taken
-    """
-    print(f"\nAttempting direct solve with Ca = {Ca}, mu_r = {mu_r}...")
+    # Solve the BVP
     start_time = time.time()
-    result = solve_single_ca(Ca, mu_r, lambda_slip, theta0, w, Delta, 
-                           s_range, y_guess)
-    time_elapsed = time.time() - start_time
-    
-    if result.success:
-        print(f"Direct solve succeeded in {time_elapsed:.2f} seconds")
-    else:
-        print(f"Direct solve failed after {time_elapsed:.2f} seconds")
-    
-    return result, time_elapsed
-
-
-def find_critical_ca_with_timing(mu_r: float, lambda_slip: float, theta0: float,
-                                w: float, Delta: float, nGridInit: int, 
-                                output_dir: str, Ca_requested: float,
-                                tolerance: float) -> Tuple:
-    """
-    Find critical Ca with detailed timing information.
-    
-    Returns:
-        (Ca_cr, Ca_values, x0_values, theta_min_values, s_range_refined, 
-         y_guess_refined, timing_info)
-    """
-    print("\nFinding critical Ca...")
-    start_time_total = time.time()
-    
-    # Call the critical Ca finder from ca_continuation_utils
-    result = find_critical_ca_lower_branch(
-        mu_r, lambda_slip, theta0, w, Delta, nGridInit, output_dir, 
-        Ca_requested=Ca_requested, tolerance=tolerance
-    )
-    
-    total_time = time.time() - start_time_total
-    
-    # Extract results
-    Ca_cr, Ca_values, x0_values, theta_min_values, s_range_refined, y_guess_refined = result
-    
-    # Create timing info dictionary
-    timing_info = {
-        'total_time': total_time,
-        'solutions_found': len(Ca_values),
-        'avg_time_per_solution': total_time / len(Ca_values) if Ca_values else 0
-    }
-    
-    print(f"\nCritical Ca search completed in {total_time:.2f} seconds")
-    print(f"Found {len(Ca_values)} solutions")
-    if Ca_values:
-        print(f"Average time per solution: {timing_info['avg_time_per_solution']:.2f} seconds")
-    
-    return Ca_cr, Ca_values, x0_values, theta_min_values, s_range_refined, y_guess_refined, timing_info
-
-
-def save_solution_data(s_values: np.ndarray, h_values: np.ndarray, 
-                      theta_values: np.ndarray, w_values: np.ndarray,
-                      x_values: np.ndarray, output_dir: str) -> str:
-    """
-    Save solution data to CSV file.
-    
-    Returns:
-        Path to saved file
-    """
-    csv_data = np.column_stack((s_values, h_values, theta_values, 
-                               w_values, x_values))
-    csv_path = os.path.join(output_dir, 'pyGLE_solution.csv')
-    np.savetxt(csv_path, csv_data, delimiter=',', 
-               header='s,h,theta,w,x', comments='')
-    return csv_path
-
-
-def run_solver_and_plot(Delta: float, Ca: float, lambda_slip: float, mu_r: float, 
-                       theta0: float, w: float, nGridInit: int = DEFAULT_NGRID_INIT, 
-                       GUI: bool = False, output_dir: str = 'output',
-                       tolerance: float = 1e-6) -> Tuple:
-    """
-    Run the solver and create plots with detailed timing information.
-    
-    Returns:
-        (solution, s_values, h_values, theta_values, w_values)
-    """
-    total_start_time = time.time()
-    
-    # Set matplotlib backend
-    if not GUI:
-        import matplotlib
-        matplotlib.use('Agg')
-    
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Step 1: Setup initial guess
-    s_range_local, y_guess_local = setup_initial_guess(Delta, nGridInit, 
-                                                       lambda_slip, theta0)
-
-    # Step 2: Try direct solve first
-    result, direct_solve_time = attempt_direct_solve(Ca, mu_r, lambda_slip, 
-                                                     theta0, w, Delta, 
-                                                     s_range_local, y_guess_local)
-    
-    Ca_actual = Ca
-    Ca_cr = None
-    Ca_values = []
-    x0_values = []
-    theta_min_values = []
-    timing_info = {'direct_solve_time': direct_solve_time}
-    
-    # Step 3: If direct solve fails, find critical Ca
-    if not result.success:
-        (Ca_cr, Ca_values, x0_values, theta_min_values, 
-         s_range_refined, y_guess_refined, ca_timing) = find_critical_ca_with_timing(
-            mu_r, lambda_slip, theta0, w, Delta, nGridInit, output_dir, 
-            Ca_requested=Ca, tolerance=tolerance
-        )
+    try:
+        solution = solve_bvp(GLE_with_params, bc_with_params, s_range, y_guess,
+                           max_nodes=100000, tol=tolerance, verbose=2)
+        solve_time = time.time() - start_time
         
-        timing_info.update(ca_timing)
-        
-        # Step 4: Solve at critical Ca
-        if Ca_cr > 0:
-            Ca_actual = Ca_cr
-            print(f"\nSolving at critical Ca = {Ca_cr:.{get_decimal_places_from_tolerance(tolerance)}f}")
+        if solution.success:
+            print(f"Solution converged in {solve_time:.2f} seconds")
+            print(f"Number of mesh points: {len(solution.x)}")
             
-            final_solve_start = time.time()
-            result = solve_single_ca(Ca_actual, mu_r, lambda_slip, theta0, w, Delta,
-                                   s_range_refined, y_guess_refined)
-            timing_info['final_solve_time'] = time.time() - final_solve_start
+            # Check solution validity
+            theta_vals = solution.y[1, :]
+            if np.any(theta_vals < 0) or np.any(theta_vals > np.pi):
+                print("WARNING: Solution has unphysical theta values")
+                return None, solve_time
+                
+            return solution, solve_time
         else:
-            print("Failed to find critical Ca")
-            return None, None, None, None, None
+            print(f"Solver failed after {solve_time:.2f} seconds")
+            print(f"Failure message: {solution.message}")
+            return None, solve_time
+            
+    except Exception as e:
+        solve_time = time.time() - start_time
+        print(f"Solver error after {solve_time:.2f} seconds: {str(e)}")
+        return None, solve_time
 
-    if not result.success:
-        print("Failed to obtain solution")
-        return None, None, None, None, None
 
-    # Step 5: Extract and process solution
-    solution = result.solution
-    s_values_local = solution.x
-    h_values_local, theta_values_local, w_values_local = solution.y
+def create_solution_plots(solution, Ca: float, mu_r: float, lambda_slip: float,
+                         theta0: float, Delta: float, output_dir: str) -> None:
+    """Create visualization plots for the solution."""
     
-    # Calculate x(s)
-    x_values_local = np.zeros_like(s_values_local)
-    x_values_local[1:] = np.cumsum(np.diff(s_values_local) * np.cos(theta_values_local[:-1]))
-
-    # Step 6: Create plots
-    plotting_start = time.time()
-    create_solution_plots(s_values_local, h_values_local, theta_values_local, 
-                         w_values_local, x_values_local, Ca_actual, Ca, Ca_cr,
-                         lambda_slip, mu_r, theta0, Delta, GUI, output_dir, tolerance)
-
-    # Plot critical Ca search results if available
-    if Ca_values:
-        plot_ca_search_results(Ca_values, x0_values, theta_min_values, output_dir, tolerance)
-    
-    timing_info['plotting_time'] = time.time() - plotting_start
-
-    # Step 7: Save data
-    csv_path = save_solution_data(s_values_local, h_values_local, theta_values_local,
-                                 w_values_local, x_values_local, output_dir)
-    print(f"Data saved to: {csv_path}")
-
-    # Step 8: Print timing summary
-    total_time = time.time() - total_start_time
-    print_timing_summary(timing_info, total_time)
-
-    return solution, s_values_local, h_values_local, theta_values_local, w_values_local
-
-
-def print_timing_summary(timing_info: Dict, total_time: float) -> None:
-    """Print detailed timing information."""
-    print("\n" + "="*60)
-    print("TIMING SUMMARY")
-    print("="*60)
-    
-    print(f"Total execution time: {total_time:.2f} seconds")
-    print(f"  - Direct solve attempt: {timing_info.get('direct_solve_time', 0):.2f} seconds")
-    
-    if 'total_time' in timing_info:
-        print(f"  - Critical Ca search: {timing_info['total_time']:.2f} seconds")
-        if timing_info.get('solutions_found', 0) > 0:
-            print(f"    * Solutions evaluated: {timing_info['solutions_found']}")
-            print(f"    * Average per solution: {timing_info['avg_time_per_solution']:.2f} seconds")
-    
-    if 'final_solve_time' in timing_info:
-        print(f"  - Final solve at Ca_cr: {timing_info['final_solve_time']:.2f} seconds")
-    
-    print(f"  - Plotting and I/O: {timing_info.get('plotting_time', 0):.2f} seconds")
-    print("="*60)
-
-def create_solution_plots(s_values: np.ndarray, h_values: np.ndarray, 
-                         theta_values: np.ndarray, w_values: np.ndarray,
-                         x_values: np.ndarray, Ca_actual: float, Ca_requested: float,
-                         Ca_cr: Optional[float], lambda_slip: float, mu_r: float,
-                         theta0: float, Delta: float, GUI: bool, output_dir: str,
-                         tolerance: float = 1e-6) -> None:
-    """Create the 2x2 subplot grid for solution visualization."""
-    plt.style.use('seaborn-v0_8-darkgrid')
-    
+    # Extract solution data
+    s_values = solution.x
+    h_values, theta_values, w_values = solution.y
     theta_values_deg = theta_values * 180 / np.pi
-    solver_color = '#1f77b4'
     
+    # Calculate x(s) by integrating cos(theta)
+    x_values = np.zeros_like(s_values)
+    x_values[1:] = np.cumsum(np.diff(s_values) * np.cos(theta_values[:-1]))
+    
+    # Find x0 and theta_min
+    x0, theta_min, x0_idx = find_x0_and_theta_min(s_values, theta_values)
+    
+    # Create figure
+    plt.style.use('seaborn-v0_8-darkgrid')
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 12))
     
     # Title
-    if Ca_cr is not None:
-        decimal_places = get_decimal_places_from_tolerance(tolerance) if tolerance else 6
-        fig.suptitle(f'GLE Solution at Critical Ca = {Ca_actual:.{decimal_places}f} (requested Ca = {Ca_requested:.{decimal_places}f})', 
-                     fontsize=16, fontweight='bold', color='darkred')
-    else:
-        decimal_places = get_decimal_places_from_tolerance(tolerance) if tolerance else 6
-        fig.suptitle(f'GLE Solution at Ca = {Ca_actual:.{decimal_places}f}', 
-                     fontsize=16, fontweight='bold')
+    fig.suptitle(f'GLE Solution at Ca = {Ca:.6f}', fontsize=16, fontweight='bold')
+    
+    solver_color = '#1f77b4'
     
     # Plot 1: h(s) vs s
     ax1.plot(s_values, h_values, '-', color=solver_color, linewidth=2.5)
@@ -434,15 +140,8 @@ def create_solution_plots(s_values: np.ndarray, h_values: np.ndarray,
     ax1.set_ylim(lambda_slip, 1.01*max(h_values))
     
     # Parameter box
-    if Ca_cr is not None:
-        decimal_places = get_decimal_places_from_tolerance(tolerance)
-        textstr = f'Ca = {Ca_actual:.{decimal_places}f} (Ca_cr)\n$\\lambda_\\text{{slip}}$ = {lambda_slip:.0e}\n$\\mu_r$ = {mu_r:.0e}'
-        facecolor = 'salmon'
-    else:
-        decimal_places = get_decimal_places_from_tolerance(tolerance)
-        textstr = f'Ca = {Ca_actual:.{decimal_places}f}\n$\\lambda_\\text{{slip}}$ = {lambda_slip:.0e}\n$\\mu_r$ = {mu_r:.0e}'
-        facecolor = 'wheat'
-    props = dict(boxstyle='round', facecolor=facecolor, alpha=0.5)
+    textstr = f'Ca = {Ca:.6f}\n$\\lambda_\\text{{slip}}$ = {lambda_slip:.0e}\n$\\mu_r$ = {mu_r:.0e}'
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
     ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=16,
              verticalalignment='top', bbox=props)
     
@@ -454,9 +153,18 @@ def create_solution_plots(s_values: np.ndarray, h_values: np.ndarray,
     ax2.grid(True, alpha=0.3)
     ax2.set_xlim(0, Delta)
     ax2.set_ylim(0.99*min(theta_values_deg), 1.01*max(theta_values_deg))
+    
+    # Add info to legend
     ax2.plot([], [], ' ', label=f'θ(0) = {theta0*180/np.pi:.0f}°')
+    ax2.plot([], [], ' ', label=f'θ_min = {theta_min*180/np.pi:.2f}°')
     ax2.legend(loc='best', fontsize=12, fancybox=True, framealpha=0.8, 
                facecolor='lightblue', edgecolor='none')
+    
+    # Mark minimum point
+    if x0_idx is not None:
+        ax2.scatter(s_values[x0_idx], theta_values_deg[x0_idx], 
+                   color='red', s=100, marker='o', zorder=5, 
+                   edgecolors='darkred', linewidth=2)
     
     # Plot 3: theta(s) vs h(s)
     ax3.plot(h_values, theta_values_deg, '-', color=solver_color, linewidth=2.5)
@@ -476,10 +184,8 @@ def create_solution_plots(s_values: np.ndarray, h_values: np.ndarray,
     ax4.set_xlim(lambda_slip, 1.01*max(h_values))
     ax4.set_ylim(0, 1.01*max(x_values))
     
-    # Mark x0 position (where theta is minimum)
-    x0, theta_min, x0_idx = find_x0_and_theta_min(s_values, theta_values)
+    # Mark x0 position
     if x0 is not None and x0_idx is not None:
-        # Get the h-value and x-value at the position where theta is minimum
         h_at_theta_min = h_values[x0_idx]
         x_at_theta_min = x_values[x0_idx]
         ax4.scatter(h_at_theta_min, x_at_theta_min, color='red', s=100, 
@@ -489,20 +195,26 @@ def create_solution_plots(s_values: np.ndarray, h_values: np.ndarray,
     
     plt.tight_layout()
     
-    if GUI:
-        plt.show()
-    else:
-        plt.savefig(os.path.join(output_dir, 'pyGLE_profiles.png'), dpi=300, bbox_inches='tight')
-        plt.close()
+    # Save plot
+    plot_path = os.path.join(output_dir, 'pyGLE_solver-profiles.png')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Plot saved to: {plot_path}")
+    
+    # Save data to CSV
+    csv_data = np.column_stack((s_values, h_values, theta_values, w_values, x_values))
+    csv_path = os.path.join(output_dir, 'pyGLE_solver-profiles.csv')
+    np.savetxt(csv_path, csv_data, delimiter=',', 
+               header='s,h,theta,w,x', comments='')
+    print(f"Data saved to: {csv_path}")
 
-# ============================================================================
-# Main Execution
-# ============================================================================
 
-if __name__ == "__main__":
+def main():
+    """Main function to run the GLE solver."""
+    
     # Create argument parser
     parser = argparse.ArgumentParser(
-        description='Solve Generalized Lubrication Equations (GLE) with critical Ca finder using optimized parallel bisection'
+        description='Solve Generalized Lubrication Equations (GLE) for contact line dynamics'
     )
     
     # Add arguments
@@ -518,50 +230,76 @@ if __name__ == "__main__":
                         help=f'Initial contact angle in degrees (default: {DEFAULT_THETA0*180/np.pi:.0f})')
     parser.add_argument('--w', type=float, default=DEFAULT_W,
                         help=f'Curvature boundary condition at s=Delta (default: {DEFAULT_W})')
-    parser.add_argument('--ngrid-init', type=int, default=DEFAULT_NGRID_INIT,
-                        help=f'Initial number of grid points (default: {DEFAULT_NGRID_INIT})')
+    parser.add_argument('--ngrid', type=int, default=DEFAULT_NGRID,
+                        help=f'Number of grid points (default: {DEFAULT_NGRID})')
     parser.add_argument('--tolerance', type=float, default=DEFAULT_TOLERANCE,
-                        help=f'Tolerance for Ca_cr refinement (default: {DEFAULT_TOLERANCE})')
-    parser.add_argument('--gui', action='store_true',
-                        help='Display plots in GUI mode')
+                        help=f'Solver tolerance (default: {DEFAULT_TOLERANCE})')
     parser.add_argument('--output-dir', type=str, default='output',
                         help='Output directory for plots and data (default: output)')
     
     # Parse arguments
     args = parser.parse_args()
     
-    # Convert theta0 from degrees to radians
+    # Convert theta0 to radians
     theta0_rad = args.theta0 * np.pi / 180
     
-    # Run solver
-    solution, s_values, h_values, theta_values, w_values = run_solver_and_plot(
-        Delta=args.delta,
-        Ca=args.ca,
-        lambda_slip=args.lambda_slip,
-        mu_r=args.mu_r,
-        theta0=theta0_rad,
-        w=args.w,
-        nGridInit=args.ngrid_init,
-        GUI=args.gui,
-        output_dir=args.output_dir,
-        tolerance=args.tolerance
-    )
-
-    if solution is not None:
-        print(f"Solution converged: {solution.success}")
-        print(f"Number of iterations: {solution.niter}")
-    else:
-        print("No solution found.")
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
     
-    # Print parameters used
-    print("\nParameters used:")
+    # Print parameters
+    print("GLE Solver")
+    print("="*60)
+    print(f"Parameters:")
     print(f"  Delta: {args.delta}")
     print(f"  Ca: {args.ca}")
     print(f"  lambda_slip: {args.lambda_slip}")
     print(f"  mu_r: {args.mu_r}")
     print(f"  theta0: {args.theta0}° ({theta0_rad:.4f} rad)")
     print(f"  w: {args.w}")
+    print(f"  ngrid: {args.ngrid}")
     print(f"  tolerance: {args.tolerance}")
+    print("="*60)
+    
+    # Solve the GLE
+    solution, solve_time = solve_gle(
+        Ca=args.ca,
+        mu_r=args.mu_r,
+        lambda_slip=args.lambda_slip,
+        theta0=theta0_rad,
+        w_bc=args.w,
+        Delta=args.delta,
+        ngrid=args.ngrid,
+        tolerance=args.tolerance
+    )
+    
+    if solution is not None:
+        print("\nSolution found successfully!")
+        
+        # Analyze solution
+        x0, theta_min, _ = find_x0_and_theta_min(solution.x, solution.y[1, :])
+        print(f"\nSolution properties:")
+        print(f"  θ_min = {theta_min*180/np.pi:.2f}°")
+        print(f"  x0 (position at θ_min) = {x0:.6f}")
+        
+        # Create plots and save data
+        create_solution_plots(solution, args.ca, args.mu_r, args.lambda_slip,
+                            theta0_rad, args.delta, args.output_dir)
+        
+        print(f"\nAll output saved to: {args.output_dir}/")
+        
+    else:
+        print("\n" + "="*60)
+        print("SOLUTION FAILED")
+        print("="*60)
+        print("\nThe solver could not find a solution for the given parameters.")
+        print("This typically happens when Ca exceeds the critical value (Ca_cr).")
+        print("\nTo find the critical Ca, please use one of these tools:")
+        print("  1. python GLE_criticalCa.py          - Standard critical Ca finder")
+        print("  2. python GLE_criticalCa_advanced.py - Advanced finder with adaptive mesh")
+        print("\nExample:")
+        print(f"  python GLE_criticalCa.py --mu_r {args.mu_r} --lambda_slip {args.lambda_slip}")
+        print("="*60)
 
-    if not args.gui:
-        print(f"\nPlots saved to: {args.output_dir}/")
+
+if __name__ == "__main__":
+    main()

@@ -4,9 +4,11 @@ Core solver functions for the GLE solver.
 
 import numpy as np
 from scipy.integrate import solve_bvp
-from typing import Tuple, Optional, Any
+from typing import Tuple, Optional, Any, List
 from solution_types import SolutionResult
 from find_x0_utils import find_x0_and_theta_min
+from gle_utils import get_adaptive_max_nodes, GLE, boundary_conditions
+from functools import partial
 
 def solve_single_ca(Ca: float, mu_r: float, lambda_slip: float, theta0: float, 
                    w_bc: float, Delta: float, s_range: np.ndarray, y_guess: np.ndarray, 
@@ -95,83 +97,4 @@ def solve_single_ca(Ca: float, mu_r: float, lambda_slip: float, theta0: float,
             y_guess=y_guess,
             Ca=Ca,
             message=f"Exception: {str(e)}"
-        )
-
-def GLE(s: float, y: np.ndarray, Ca: float, mu_r: float, lambda_slip: float) -> List[float]:
-    """
-    System of ODEs defining the contact line shape evolution.
-    
-    Args:
-        s: Arc length coordinate
-        y: State vector [h, theta, omega]
-        Ca: Capillary number
-        mu_r: Viscosity ratio
-        lambda_slip: Slip length
-    
-    Returns:
-        Derivatives [dh/ds, dtheta/ds, domega/ds]
-    """
-    h, theta, omega = y
-    
-    # Ensure h stays positive (physical constraint)
-    # If h becomes too small, clamp it to a small positive value
-    h_min = lambda_slip * 1e-6  # Minimum h as a fraction of slip length
-    h_safe = np.maximum(h, h_min)
-    
-    # Ensure theta stays in physical range (0, pi)
-    theta_safe = np.clip(theta, 1e-10, np.pi - 1e-10)
-    
-    dh_ds = np.sin(theta_safe)  # dh/ds = sin(theta)
-    dt_ds = omega  # omega = dtheta/ds
-    
-    # Use safe values to prevent division by zero
-    dw_ds = -3 * Ca * f(theta_safe, mu_r) / (h_safe * (h_safe + 3 * lambda_slip)) - np.cos(theta_safe)
-    
-    return [dh_ds, dt_ds, dw_ds]
-
-def boundary_conditions(ya: np.ndarray, yb: np.ndarray, w_bc: float, 
-                       theta0: float, lambda_slip: float) -> List[float]:
-    """
-    Boundary conditions for the BVP.
-    
-    Args:
-        ya: State at s = 0
-        yb: State at s = Delta
-        w_bc: Curvature BC at s = Delta
-        theta0: Initial contact angle
-        lambda_slip: Slip length
-    
-    Returns:
-        Residuals for boundary conditions
-    """
-    h_a, theta_a, w_a = ya  # boundary conditions at s = 0
-    h_b, theta_b, w_b = yb  # boundary conditions at s = Delta
-    return [
-        theta_a - theta0,      # theta(0) = theta0
-        h_a - lambda_slip,     # h(0) = lambda_slip
-        w_b - w_bc            # w(Delta) = w_bc (curvature at s=Delta)
-    ]
-
-def f1(theta: np.ndarray) -> np.ndarray:
-    """First helper function for GLE formulation."""
-    return theta**2 - np.sin(theta)**2
-
-def f2(theta: np.ndarray) -> np.ndarray:
-    """Second helper function for GLE formulation."""
-    return theta - np.sin(theta) * np.cos(theta)
-
-def f3(theta: np.ndarray) -> np.ndarray:
-    """Third helper function for GLE formulation."""
-    return theta * (np.pi - theta) + np.sin(theta)**2
-
-def f(theta: np.ndarray, mu_r: float) -> np.ndarray:
-    """Combined function for GLE with viscosity ratio."""
-    numerator = 2 * np.sin(theta)**3 * (mu_r**2 * f1(theta) + 2 * mu_r * f3(theta) + f1(np.pi - theta))
-    denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) - f1(np.pi - theta) * f2(theta))
-    
-    # Add small epsilon to prevent division by zero
-    epsilon = 1e-10
-    denominator = np.where(np.abs(denominator) < epsilon, 
-                          np.sign(denominator) * epsilon + (denominator == 0) * epsilon, 
-                          denominator)
-    return numerator / denominator 
+        ) 

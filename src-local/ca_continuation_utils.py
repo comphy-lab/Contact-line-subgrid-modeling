@@ -634,7 +634,7 @@ def find_critical_ca_lower_branch(mu_r: float, lambda_slip: float, theta0: float
         print(f"θ_min at Ca_cr: {final_theta_min*180/np.pi:.2f}°")
         if final_theta_min > 0.1:  # > ~5.7°
             print("WARNING: θ_min is not close to 0°. True critical Ca may be slightly higher.")
-            print("Consider using GLE_critical_ca_advanced.py for more accurate results.")
+            print("Consider using GLE_criticalCa_advanced.py for more accurate results.")
     
     # Print timing summary for this function
     timing_info['total_time'] = time.time() - total_start
