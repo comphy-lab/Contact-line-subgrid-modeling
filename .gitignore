@@ -129,4 +129,5 @@ cache/
 
 # Explicitly allow Claude files
 !.claude/
-!CLAUDE.md*.pkl
+!CLAUDE.md
+*.pkl
