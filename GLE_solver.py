@@ -23,6 +23,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Tuple, List, Optional, Dict, Any
+import time
 
 # Import utilities from src-local
 import sys
@@ -50,7 +51,6 @@ DEFAULT_W = 0  # curvature boundary condition at s = Δ
 DEFAULT_NGRID_INIT = 10000  # Initial number of grid points
 DEFAULT_TOLERANCE = 1e-6  # Default tolerance for Ca_cr refinement
 
-# Note: Mathematical functions and core solver functions are now imported from gle_utils
 
 def parallel_solve_multiple_ca(Ca_list: List[float], mu_r: float, lambda_slip: float, 
                               theta0: float, w_bc: float, Delta: float,
@@ -178,16 +178,123 @@ def plot_ca_search_results(Ca_values: List[float], x0_values: List[float],
                    header='Ca,theta_min_rad,theta_min_deg', comments='')
     print(f"Critical Ca search data saved to: {csv_path}")
 
+def setup_initial_guess(Delta: float, nGridInit: int, lambda_slip: float, 
+                       theta0: float) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Create initial guess for the BVP solver.
+    
+    Args:
+        Delta: Maximum s-value
+        nGridInit: Number of grid points
+        lambda_slip: Slip length
+        theta0: Initial contact angle
+        
+    Returns:
+        (s_range, y_guess): Grid and initial guess arrays
+    """
+    s_range = np.linspace(0, Delta, nGridInit)
+    y_guess = np.zeros((3, s_range.size))
+    # Use a more physical initial guess for h
+    # h grows from lambda_slip following approximately h ~ s for small s
+    y_guess[0, :] = lambda_slip + s_range * np.sin(theta0)
+    y_guess[1, :] = theta0
+    y_guess[2, :] = 0
+    
+    return s_range, y_guess
+
+
+def attempt_direct_solve(Ca: float, mu_r: float, lambda_slip: float, theta0: float,
+                        w: float, Delta: float, s_range: np.ndarray, 
+                        y_guess: np.ndarray) -> Tuple[SolutionResult, float]:
+    """
+    Attempt to solve directly at the requested Ca.
+    
+    Returns:
+        (result, time_elapsed): Solution result and time taken
+    """
+    print(f"\nAttempting direct solve with Ca = {Ca}, mu_r = {mu_r}...")
+    start_time = time.time()
+    result = solve_single_ca(Ca, mu_r, lambda_slip, theta0, w, Delta, 
+                           s_range, y_guess)
+    time_elapsed = time.time() - start_time
+    
+    if result.success:
+        print(f"Direct solve succeeded in {time_elapsed:.2f} seconds")
+    else:
+        print(f"Direct solve failed after {time_elapsed:.2f} seconds")
+    
+    return result, time_elapsed
+
+
+def find_critical_ca_with_timing(mu_r: float, lambda_slip: float, theta0: float,
+                                w: float, Delta: float, nGridInit: int, 
+                                output_dir: str, Ca_requested: float,
+                                tolerance: float) -> Tuple:
+    """
+    Find critical Ca with detailed timing information.
+    
+    Returns:
+        (Ca_cr, Ca_values, x0_values, theta_min_values, s_range_refined, 
+         y_guess_refined, timing_info)
+    """
+    print("\nFinding critical Ca...")
+    start_time_total = time.time()
+    
+    # Call the critical Ca finder from ca_continuation_utils
+    result = find_critical_ca_lower_branch(
+        mu_r, lambda_slip, theta0, w, Delta, nGridInit, output_dir, 
+        Ca_requested=Ca_requested, tolerance=tolerance
+    )
+    
+    total_time = time.time() - start_time_total
+    
+    # Extract results
+    Ca_cr, Ca_values, x0_values, theta_min_values, s_range_refined, y_guess_refined = result
+    
+    # Create timing info dictionary
+    timing_info = {
+        'total_time': total_time,
+        'solutions_found': len(Ca_values),
+        'avg_time_per_solution': total_time / len(Ca_values) if Ca_values else 0
+    }
+    
+    print(f"\nCritical Ca search completed in {total_time:.2f} seconds")
+    print(f"Found {len(Ca_values)} solutions")
+    if Ca_values:
+        print(f"Average time per solution: {timing_info['avg_time_per_solution']:.2f} seconds")
+    
+    return Ca_cr, Ca_values, x0_values, theta_min_values, s_range_refined, y_guess_refined, timing_info
+
+
+def save_solution_data(s_values: np.ndarray, h_values: np.ndarray, 
+                      theta_values: np.ndarray, w_values: np.ndarray,
+                      x_values: np.ndarray, output_dir: str) -> str:
+    """
+    Save solution data to CSV file.
+    
+    Returns:
+        Path to saved file
+    """
+    csv_data = np.column_stack((s_values, h_values, theta_values, 
+                               w_values, x_values))
+    csv_path = os.path.join(output_dir, 'pyGLE_solution.csv')
+    np.savetxt(csv_path, csv_data, delimiter=',', 
+               header='s,h,theta,w,x', comments='')
+    return csv_path
+
+
 def run_solver_and_plot(Delta: float, Ca: float, lambda_slip: float, mu_r: float, 
                        theta0: float, w: float, nGridInit: int = DEFAULT_NGRID_INIT, 
                        GUI: bool = False, output_dir: str = 'output',
                        tolerance: float = 1e-6) -> Tuple:
     """
-    Run the solver and create plots.
+    Run the solver and create plots with detailed timing information.
     
     Returns:
         (solution, s_values, h_values, theta_values, w_values)
     """
+    total_start_time = time.time()
+    
     # Set matplotlib backend
     if not GUI:
         import matplotlib
@@ -196,41 +303,41 @@ def run_solver_and_plot(Delta: float, Ca: float, lambda_slip: float, mu_r: float
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # Initial guess with better h profile
-    s_range_local = np.linspace(0, Delta, nGridInit)
-    y_guess_local = np.zeros((3, s_range_local.size))
-    # Use a more physical initial guess for h
-    # h grows from lambda_slip following approximately h ~ s for small s
-    y_guess_local[0, :] = lambda_slip + s_range_local * np.sin(theta0)
-    y_guess_local[1, :] = theta0
-    y_guess_local[2, :] = 0
+    # Step 1: Setup initial guess
+    s_range_local, y_guess_local = setup_initial_guess(Delta, nGridInit, 
+                                                       lambda_slip, theta0)
 
-    # Try direct solve first
-    print(f"\nAttempting direct solve with Ca = {Ca}, mu_r = {mu_r}...")
-    result = solve_single_ca(Ca, mu_r, lambda_slip, theta0, w, Delta, 
-                           s_range_local, y_guess_local)
+    # Step 2: Try direct solve first
+    result, direct_solve_time = attempt_direct_solve(Ca, mu_r, lambda_slip, 
+                                                     theta0, w, Delta, 
+                                                     s_range_local, y_guess_local)
     
     Ca_actual = Ca
     Ca_cr = None
     Ca_values = []
     x0_values = []
     theta_min_values = []
+    timing_info = {'direct_solve_time': direct_solve_time}
     
+    # Step 3: If direct solve fails, find critical Ca
     if not result.success:
-        print("Direct solve failed. Finding critical Ca...")
-        # Find critical Ca
-        Ca_cr, Ca_values, x0_values, theta_min_values, s_range_refined, y_guess_refined = find_critical_ca_lower_branch(
+        (Ca_cr, Ca_values, x0_values, theta_min_values, 
+         s_range_refined, y_guess_refined, ca_timing) = find_critical_ca_with_timing(
             mu_r, lambda_slip, theta0, w, Delta, nGridInit, output_dir, 
             Ca_requested=Ca, tolerance=tolerance
         )
         
-        # Solve at critical Ca
+        timing_info.update(ca_timing)
+        
+        # Step 4: Solve at critical Ca
         if Ca_cr > 0:
             Ca_actual = Ca_cr
             print(f"\nSolving at critical Ca = {Ca_cr:.{get_decimal_places_from_tolerance(tolerance)}f}")
             
+            final_solve_start = time.time()
             result = solve_single_ca(Ca_actual, mu_r, lambda_slip, theta0, w, Delta,
                                    s_range_refined, y_guess_refined)
+            timing_info['final_solve_time'] = time.time() - final_solve_start
         else:
             print("Failed to find critical Ca")
             return None, None, None, None, None
@@ -239,17 +346,17 @@ def run_solver_and_plot(Delta: float, Ca: float, lambda_slip: float, mu_r: float
         print("Failed to obtain solution")
         return None, None, None, None, None
 
-    # Extract solution
+    # Step 5: Extract and process solution
     solution = result.solution
     s_values_local = solution.x
     h_values_local, theta_values_local, w_values_local = solution.y
-    theta_values_deg = theta_values_local * 180 / np.pi
     
     # Calculate x(s)
     x_values_local = np.zeros_like(s_values_local)
     x_values_local[1:] = np.cumsum(np.diff(s_values_local) * np.cos(theta_values_local[:-1]))
 
-    # Create plots
+    # Step 6: Create plots
+    plotting_start = time.time()
     create_solution_plots(s_values_local, h_values_local, theta_values_local, 
                          w_values_local, x_values_local, Ca_actual, Ca, Ca_cr,
                          lambda_slip, mu_r, theta0, Delta, GUI, output_dir, tolerance)
@@ -257,15 +364,41 @@ def run_solver_and_plot(Delta: float, Ca: float, lambda_slip: float, mu_r: float
     # Plot critical Ca search results if available
     if Ca_values:
         plot_ca_search_results(Ca_values, x0_values, theta_min_values, output_dir, tolerance)
+    
+    timing_info['plotting_time'] = time.time() - plotting_start
 
-    # Save data
-    csv_data = np.column_stack((s_values_local, h_values_local, theta_values_local, 
-                               w_values_local, x_values_local))
-    csv_path = os.path.join(output_dir, 'pyGLE_solution.csv')
-    np.savetxt(csv_path, csv_data, delimiter=',', header='s,h,theta,w,x', comments='')
+    # Step 7: Save data
+    csv_path = save_solution_data(s_values_local, h_values_local, theta_values_local,
+                                 w_values_local, x_values_local, output_dir)
     print(f"Data saved to: {csv_path}")
 
+    # Step 8: Print timing summary
+    total_time = time.time() - total_start_time
+    print_timing_summary(timing_info, total_time)
+
     return solution, s_values_local, h_values_local, theta_values_local, w_values_local
+
+
+def print_timing_summary(timing_info: Dict, total_time: float) -> None:
+    """Print detailed timing information."""
+    print("\n" + "="*60)
+    print("TIMING SUMMARY")
+    print("="*60)
+    
+    print(f"Total execution time: {total_time:.2f} seconds")
+    print(f"  - Direct solve attempt: {timing_info.get('direct_solve_time', 0):.2f} seconds")
+    
+    if 'total_time' in timing_info:
+        print(f"  - Critical Ca search: {timing_info['total_time']:.2f} seconds")
+        if timing_info.get('solutions_found', 0) > 0:
+            print(f"    * Solutions evaluated: {timing_info['solutions_found']}")
+            print(f"    * Average per solution: {timing_info['avg_time_per_solution']:.2f} seconds")
+    
+    if 'final_solve_time' in timing_info:
+        print(f"  - Final solve at Ca_cr: {timing_info['final_solve_time']:.2f} seconds")
+    
+    print(f"  - Plotting and I/O: {timing_info.get('plotting_time', 0):.2f} seconds")
+    print("="*60)
 
 def create_solution_plots(s_values: np.ndarray, h_values: np.ndarray, 
                          theta_values: np.ndarray, w_values: np.ndarray,

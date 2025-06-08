@@ -6,6 +6,7 @@ import numpy as np
 from typing import Tuple, List, Optional, Dict, Any
 import sys
 import os
+import time
 
 # Import from local modules
 from solution_types import SolutionResult, SolutionCache
@@ -498,8 +499,11 @@ def find_critical_ca_lower_branch(mu_r: float, lambda_slip: float, theta0: float
         where s_range_final and y_guess_final are from the last successful solution
     """
     print("\nFinding critical Ca using a two-stage method...")
+    timing_info = {}
+    total_start = time.time()
     
     # Stage 1: Coarse logarithmic search
+    stage1_start = time.time()
     Ca_coarse = np.logspace(-4, np.log10(max(Ca_requested, 1e-3)), 30)
     
     # Initial guess with better h profile
@@ -548,7 +552,10 @@ def find_critical_ca_lower_branch(mu_r: float, lambda_slip: float, theta0: float
             Ca_fail = Ca
             break
     
+    timing_info['stage1_time'] = time.time() - stage1_start
+    
     # Stage 1.5: If the interval is too large, do a finer search
+    stage15_start = time.time()
     if Ca_critical > 0 and Ca_fail is not None:
         interval_ratio = Ca_fail / Ca_critical
         if interval_ratio > 1.1:  # Interval is more than 10% wide
@@ -573,7 +580,10 @@ def find_critical_ca_lower_branch(mu_r: float, lambda_slip: float, theta0: float
             print(f"  Refined interval: [{Ca_critical:.{get_decimal_places_from_tolerance(tolerance)}f}, " +
                   f"{Ca_fail:.{get_decimal_places_from_tolerance(tolerance)}f}]")
     
+    timing_info['stage15_time'] = time.time() - stage15_start
+    
     # Stage 2: Hybrid IQI + Newton refinement
+    stage2_start = time.time()
     if Ca_critical > 0 and Ca_fail is not None:
         print("\nStage 2: Hybrid IQI + Newton-Raphson refinement...")
         Ca_critical_refined, s_range, y_guess = hybrid_iqi_newton_refinement(
@@ -586,6 +596,8 @@ def find_critical_ca_lower_branch(mu_r: float, lambda_slip: float, theta0: float
         Ca_critical = Ca_critical_refined
     elif Ca_fail is None:
         print(f"\nNo failure found up to Ca = {Ca_coarse[-1]:.{get_decimal_places_from_tolerance(tolerance)}f}")
+    
+    timing_info['stage2_time'] = time.time() - stage2_start
     
     # Final extrapolation if we have enough data points near critical Ca
     if len(Ca_values) >= 3 and len(theta_min_values) >= 3:
@@ -622,5 +634,14 @@ def find_critical_ca_lower_branch(mu_r: float, lambda_slip: float, theta0: float
         print(f"θ_min at Ca_cr: {final_theta_min*180/np.pi:.2f}°")
         if final_theta_min > 0.1:  # > ~5.7°
             print("WARNING: θ_min is not close to 0°. True critical Ca may be slightly higher.")
+            print("Consider using GLE_critical_ca_advanced.py for more accurate results.")
+    
+    # Print timing summary for this function
+    timing_info['total_time'] = time.time() - total_start
+    print(f"\nCritical Ca finding stages:")
+    print(f"  Stage 1 (coarse search): {timing_info['stage1_time']:.2f}s")
+    print(f"  Stage 1.5 (refinement): {timing_info['stage15_time']:.2f}s")
+    print(f"  Stage 2 (IQI+Newton): {timing_info['stage2_time']:.2f}s")
+    print(f"  Total: {timing_info['total_time']:.2f}s")
     
     return Ca_critical, Ca_values, x0_values, theta_min_values, s_range, y_guess 
