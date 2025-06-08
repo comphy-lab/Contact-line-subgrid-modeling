@@ -296,7 +296,7 @@ def run_solver_and_plot(Delta: float, Ca: float, lambda_slip: float, mu_r: float
     Run the solver and create plots with detailed timing information.
     
     Returns:
-        (solution, s_values, h_values, theta_values, w_values)
+        (solution, s_values, h_values, theta_values, w_values, Ca_actual)
     """
     total_start_time = time.time()
     
@@ -345,11 +345,11 @@ def run_solver_and_plot(Delta: float, Ca: float, lambda_slip: float, mu_r: float
             timing_info['final_solve_time'] = time.time() - final_solve_start
         else:
             print("Failed to find critical Ca")
-            return None, None, None, None, None
+            return None, None, None, None, None, None
 
     if not result.success:
         print("Failed to obtain solution")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     # Step 5: Extract and process solution
     solution = result.solution
@@ -381,7 +381,7 @@ def run_solver_and_plot(Delta: float, Ca: float, lambda_slip: float, mu_r: float
     total_time = time.time() - total_start_time
     print_timing_summary(timing_info, total_time)
 
-    return solution, s_values_local, h_values_local, theta_values_local, w_values_local
+    return solution, s_values_local, h_values_local, theta_values_local, w_values_local, Ca_actual
 
 
 def print_timing_summary(timing_info: Dict, total_time: float) -> None:
@@ -422,7 +422,7 @@ def create_solution_plots(s_values: np.ndarray, h_values: np.ndarray,
     # Title
     if Ca_cr is not None:
         decimal_places = get_decimal_places_from_tolerance(tolerance) if tolerance else 6
-        fig.suptitle(f'GLE Solution at Critical Ca = {Ca_actual:.{decimal_places}f} (requested Ca = {Ca_requested:.{decimal_places}f})', 
+        fig.suptitle(f'GLE Solution at Critical Ca = {Ca_actual:.{decimal_places}f}', 
                      fontsize=16, fontweight='bold', color='darkred')
     else:
         decimal_places = get_decimal_places_from_tolerance(tolerance) if tolerance else 6
@@ -539,7 +539,7 @@ if __name__ == "__main__":
     theta0_rad = args.theta0 * np.pi / 180
     
     # Run solver
-    solution, s_values, h_values, theta_values, w_values = run_solver_and_plot(
+    result = run_solver_and_plot(
         Delta=args.delta,
         Ca=args.ca,
         lambda_slip=args.lambda_slip,
@@ -551,22 +551,38 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         tolerance=args.tolerance
     )
-
-    if solution is not None:
+    
+    if result[0] is not None:
+        solution, s_values, h_values, theta_values, w_values, Ca_actual = result
         print(f"Solution converged: {solution.success}")
         print(f"Number of iterations: {solution.niter}")
+        
+        # Print parameters used
+        print("\nParameters used:")
+        print(f"  Delta: {args.delta}")
+        print(f"  Ca_requested: {args.ca}")
+        print(f"  lambda_slip: {args.lambda_slip}")
+        print(f"  mu_r: {args.mu_r}")
+        print(f"  theta0: {args.theta0}° ({theta0_rad:.4f} rad)")
+        print(f"  w: {args.w}")
+        print(f"  tolerance: {args.tolerance}")
+        
+        # Report actual Ca used
+        if Ca_actual != args.ca:
+            print(f"\nNote: Requested Ca = {args.ca} exceeded Ca_critical")
+            print(f"      Solution computed at Ca_critical = {Ca_actual:.{get_decimal_places_from_tolerance(args.tolerance)}f}")
+        else:
+            print(f"\nSolution computed at Ca = {Ca_actual:.{get_decimal_places_from_tolerance(args.tolerance)}f}")
     else:
         print("No solution found.")
-    
-    # Print parameters used
-    print("\nParameters used:")
-    print(f"  Delta: {args.delta}")
-    print(f"  Ca: {args.ca}")
-    print(f"  lambda_slip: {args.lambda_slip}")
-    print(f"  mu_r: {args.mu_r}")
-    print(f"  theta0: {args.theta0}° ({theta0_rad:.4f} rad)")
-    print(f"  w: {args.w}")
-    print(f"  tolerance: {args.tolerance}")
+        print("\nParameters used:")
+        print(f"  Delta: {args.delta}")
+        print(f"  Ca_requested: {args.ca}")
+        print(f"  lambda_slip: {args.lambda_slip}")
+        print(f"  mu_r: {args.mu_r}")
+        print(f"  theta0: {args.theta0}° ({theta0_rad:.4f} rad)")
+        print(f"  w: {args.w}")
+        print(f"  tolerance: {args.tolerance}")
 
     if not args.gui:
         print(f"\nPlots saved to: {args.output_dir}/")
