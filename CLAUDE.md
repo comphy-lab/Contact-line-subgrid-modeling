@@ -49,21 +49,36 @@ This repository contains Python implementations for contact line subgrid modelin
   - Uses enhanced Phase 0 from GLE_criticalCa with improvements
 - NOTE: This is NOT a continuation method - it specifically finds Ca_critical
 
-### GLE_continuation_hybrid.py
-- Implements full pseudo-arclength continuation for tracking δX_cl vs Ca
+### GLE_continuation_v4.py
+- Unified continuation solver supporting both pseudo-arclength and natural parameter methods
 - Key features:
-  - Tracks contact line displacement δX_cl = X_cl(Ca) - X_cl(Ca=0)
-  - Uses predictor-corrector with extended system
-  - Automatic fold detection and branch switching capability
+  - Tracks contact line displacement δX_cl = X_cl(Ca) - X_cl(Ca≈0)
+  - Natural parameter method: Simple Ca stepping for stable branches
+  - Simplified pseudo-arclength: More robust near folds but cannot trace unstable branch
+  - Automatic fold detection and branch classification
   - Adaptive step size control
-  - Comprehensive analysis and visualization
 - Key functions:
-  - `GLEContinuation`: Main class implementing continuation
-  - `pseudo_arclength_continuation()`: Main continuation loop
-  - `_build_extended_system()`: Extended system for arc-length constraint
-  - `_detect_fold()`: Fold point detection
+  - `GLEContinuation`: Main class with method selection
+  - `trace_branch()`: Main continuation loop
+  - `_predictor_arclength()` and `_predictor_natural()`: Different prediction strategies
+  - `_corrector()`: Simplified correction step
   - `analyze_branch()`: Branch analysis including fold identification
-- Outputs complete branch data in .pkl or .h5 format
+- Best for: Finding critical Ca and stable branch analysis
+
+### GLE_continuation_v4.5.py
+- Extended pseudo-arclength continuation with true arc-length constraints
+- Key features:
+  - Solves extended system with coupled Ca and solution variables
+  - Traces through fold bifurcations to capture unstable branches
+  - Creates S-shaped bifurcation curves
+  - Newton iteration on extended system
+  - Full arc-length parameterization
+- Key functions:
+  - `GLEContinuationExtended`: Main class for extended method
+  - `extended_system()`: Constructs full system with arc-length constraint
+  - `newton_extended()`: Newton solver for coupled system
+  - `compute_tangent()`: Normalized tangent including solution components
+- Best for: Complete bifurcation analysis with stable and unstable branches
 
 ### huh_scriven_velocity.py
 - Analyzes the Huh-Scriven velocity field near moving contact lines
@@ -82,8 +97,15 @@ python GLE_criticalCa.py --ca 0.05 --mu_r 1e-6 --lambda_slip 1e-4
 # Find the critical Ca using advanced method with adaptive mesh
 python GLE_criticalCa_advanced.py --mu_r 1e-6 --lambda_slip 1e-4
 
-# Run pseudo-arclength continuation to track δX_cl vs Ca
-python GLE_continuation_hybrid.py --mu_r 1.0 --lambda_slip 1e-4 --theta0 10 --Ca_target 0.1
+# Run continuation methods to track δX_cl vs Ca
+# Method 1: Unified solver with natural parameter (finds critical Ca on stable branch)
+python GLE_continuation_v4.py --method natural --mu_r 1e-6 --lambda_slip 1e-3 --theta0 60
+
+# Method 2: Unified solver with simplified pseudo-arclength (more robust near folds)
+python GLE_continuation_v4.py --method arclength --mu_r 1e-6 --lambda_slip 1e-3 --theta0 60
+
+# Method 3: Extended pseudo-arclength (traces through folds, captures unstable branch)
+python GLE_continuation_v4.5.py --mu_r 1e-6 --lambda_slip 1e-3 --theta0 60
 
 # Run the Huh-Scriven velocity analysis
 python huh_scriven_velocity.py
@@ -116,9 +138,15 @@ The system exhibits a bifurcation structure with:
 - GLE_solver.py is for solving at a specific Ca value (when Ca < Ca_critical)
 - GLE_criticalCa.py finds Ca_critical using hybrid IQI/Newton/bisection refinement
 - GLE_criticalCa_advanced.py provides more robust critical Ca finding with adaptive mesh refinement
+- GLE_continuation_v4.py offers two methods:
+  - Natural parameter: Fast, simple, finds critical Ca on stable branch
+  - Simplified pseudo-arclength: More robust near folds but cannot trace unstable branch
+- GLE_continuation_v4.5.py implements true pseudo-arclength continuation:
+  - Solves extended system with arc-length constraint
+  - Can trace through fold bifurcations
+  - Captures complete S-shaped bifurcation curve
 - Default parameters (Delta=10, ngrid=10000) work well for most cases
 - For very small slip lengths (<1e-6), may need to increase grid resolution
-- The advanced finder uses adaptive mesh refinement for improved accuracy near critical points
 
 ## File Organization
 
