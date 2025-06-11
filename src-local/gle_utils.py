@@ -71,7 +71,7 @@ def GLE(s: float, y: np.ndarray, Ca: float, mu_r: float, lambda_slip: float) -> 
     dt_ds = omega  # omega = dtheta/ds
     
     # Use safe values to prevent division by zero
-    dw_ds = -3 * Ca * f(theta_safe, mu_r) / (h_safe * (h_safe + 3 * lambda_slip)) - np.cos(theta_safe)
+    dw_ds = 3 * Ca * f(theta_safe, mu_r) / (h_safe * (h_safe + 3 * lambda_slip)) + np.cos(theta_safe)
     
     return [dh_ds, dt_ds, dw_ds]
 
