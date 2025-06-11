@@ -6,8 +6,8 @@ import sys
 from functools import partial
 
 #Parameters
-Ca = 1.0  # Capillary number
-lambda_slip = 1e-5  # Slip length
+Ca = 0.0246  # Capillary number
+lambda_slip = 1e-4  # Slip length
 mu_r = 1e-3 # \mu_g/\mu_l
 
 # Define f1, f2, and f3 functions
@@ -23,12 +23,12 @@ def f3(theta):
 # Define f(theta, mu_r) function
 def f(theta, mu_r):
     numerator = 2 * np.sin(theta)**3 * (mu_r**2 * f1(theta) + 2 * mu_r * f3(theta) + f1(np.pi - theta))
-    denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) - f1(np.pi - theta) * f2(theta))
+    denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) + f1(np.pi - theta) * f2(theta))
     return numerator / denominator
 
 # Initial conditions
 h0 = lambda_slip  # h at s = 0
-theta0 = np.pi/6  # theta at s = 0
+theta0 = np.pi/2  # theta at s = 0
 w = 0  # curvature boundary condition at s = \Delta, this needs to be not remain constant, but fed back from the DNS
 
 
@@ -79,21 +79,24 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     os.makedirs(output_dir, exist_ok=True)
 
     # Initial guess for the solution
-    s_range_local = np.linspace(0, 4*Delta, 100000)  # Define the range of s
+    s_range_local = np.linspace(0, 10, 1000)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
-    y_guess_local[0, :] = np.linspace(lambda_slip, Delta, s_range_local.size)  # Linear guess for h
-    y_guess_local[1, :] = np.pi / 6  # Initial guess for theta
+    y_guess_local[0, :] = np.linspace(lambda_slip, 10, s_range_local.size)  # Linear guess for h
+    y_guess_local[1, :] = np.pi / 2  # Initial guess for theta
     y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
     # Solve the ODEs
     # Use partial to pass w as a parameter to boundary_conditions
     bc_with_w = partial(boundary_conditions, w_bc=w)
-    solution = solve_bvp(GLE, bc_with_w, s_range_local, y_guess_local)
+    solution = solve_bvp(GLE, bc_with_w, s_range_local, y_guess_local, max_nodes=1000000)
 
     # Extract the solution
     s_values_local = solution.x
     h_values_local, theta_values_local, w_values_local = solution.y
     theta_values_deg = theta_values_local*180/np.pi
+
+    x_values_local = np.zeros_like(s_values_local)
+    x_values_local[1:] = np.cumsum(np.diff(s_values_local) * np.cos(theta_values_local[:-1]))
 
     # Plot the results with nice styling
     plt.style.use('seaborn-v0_8-darkgrid')
@@ -105,13 +108,13 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
     # Plot h(s)
-    ax1.plot(s_values_local * 1e6, h_values_local * 1e6, '-', 
+    ax1.plot(s_values_local, h_values_local, '-', 
              color=solver_color, linewidth=2.5)
-    ax1.set_xlabel('s [μm]', fontsize=12)
-    ax1.set_ylabel('h(s) [μm]', fontsize=12)
+    ax1.set_xlabel('x ', fontsize=12)
+    ax1.set_ylabel('h(s) ', fontsize=12)
     ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim(0, 4*Delta * 1e6)
+    ax1.set_xlim(0, 10)
     
     # Add text box with parameters
     textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'
@@ -120,13 +123,13 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
              verticalalignment='top', bbox=props)
     
     # Plot theta(s)
-    ax2.plot(s_values_local * 1e6, theta_values_deg, '-', 
+    ax2.plot(s_values_local, theta_values_deg, '-', 
              color=solver_color, linewidth=2.5)
     ax2.set_xlabel('s [μm]', fontsize=12)
     ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(0, 4*Delta * 1e6)
+    ax2.set_xlim(0, 10)
     
     # Add initial condition text
     ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
