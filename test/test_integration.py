@@ -29,7 +29,16 @@ class TestIntegration:
     
     def test_gle_solver_runs_without_error(self):
         """Test that GLE solver runs and produces output"""
-        solution, s_values, h_values, theta_values, w_values = run_gle_solver(output_dir=self.test_output_dir)
+        # Use default parameters for testing
+        Delta = 10.0
+        Ca = 0.01  # Use a small Ca that should converge
+        lambda_slip = 1e-4
+        mu_r = 1e-6
+        theta0 = np.pi/2
+        w = 0
+        solution, s_values, h_values, theta_values, w_values = run_gle_solver(
+            Delta=Delta, Ca=Ca, lambda_slip=lambda_slip, mu_r=mu_r,
+            theta0=theta0, w=w, output_dir=self.test_output_dir)
         
         # Check that solution exists
         assert solution is not None
@@ -55,7 +64,16 @@ class TestIntegration:
     
     def test_gle_solver_creates_plots(self):
         """Test that GLE solver creates plot files"""
-        solution, _, _, _, _ = run_gle_solver(output_dir=self.test_output_dir)
+        # Use default parameters for testing
+        Delta = 10.0
+        Ca = 0.01
+        lambda_slip = 1e-4
+        mu_r = 1e-6
+        theta0 = np.pi/2
+        w = 0
+        solution, _, _, _, _ = run_gle_solver(
+            Delta=Delta, Ca=Ca, lambda_slip=lambda_slip, mu_r=mu_r,
+            theta0=theta0, w=w, output_dir=self.test_output_dir)
         
         # Warn if solver didn't converge but continue testing
         if not solution.success:
@@ -119,7 +137,15 @@ class TestIntegration:
     def test_plot_file_sizes(self):
         """Test that plot files have reasonable sizes"""
         # Run both solvers to generate plots
-        solution, _, _, _, _ = run_gle_solver(output_dir=self.test_output_dir)
+        Delta = 10.0
+        Ca = 0.01
+        lambda_slip = 1e-4
+        mu_r = 1e-6
+        theta0 = np.pi/2
+        w = 0
+        solution, _, _, _, _ = run_gle_solver(
+            Delta=Delta, Ca=Ca, lambda_slip=lambda_slip, mu_r=mu_r,
+            theta0=theta0, w=w, output_dir=self.test_output_dir)
         run_huh_scriven(output_dir=self.test_output_dir)
         
         # Define minimum reasonable file size (1KB)
@@ -145,7 +171,15 @@ class TestIntegration:
     
     def test_gle_physical_constraints(self):
         """Test that GLE solution satisfies physical constraints"""
-        solution, s_values, h_values, theta_values, w_values = run_gle_solver(output_dir=self.test_output_dir)
+        Delta = 10.0
+        Ca = 0.01
+        lambda_slip = 1e-4
+        mu_r = 1e-6
+        theta0 = np.pi/2
+        w = 0
+        solution, s_values, h_values, theta_values, w_values = run_gle_solver(
+            Delta=Delta, Ca=Ca, lambda_slip=lambda_slip, mu_r=mu_r,
+            theta0=theta0, w=w, output_dir=self.test_output_dir)
         
         # Warn if solver didn't converge but still check what we can
         if not solution.success:
@@ -174,8 +208,18 @@ class TestIntegration:
     def test_reproducibility(self):
         """Test that repeated runs give same results"""
         # Run solver twice
-        solution1, s1, h1, theta1, w1 = run_gle_solver(output_dir=self.test_output_dir)
-        solution2, s2, h2, theta2, w2 = run_gle_solver(output_dir=self.test_output_dir)
+        Delta = 10.0
+        Ca = 0.01
+        lambda_slip = 1e-4
+        mu_r = 1e-6
+        theta0 = np.pi/2
+        w = 0
+        solution1, s1, h1, theta1, w1 = run_gle_solver(
+            Delta=Delta, Ca=Ca, lambda_slip=lambda_slip, mu_r=mu_r,
+            theta0=theta0, w=w, output_dir=self.test_output_dir)
+        solution2, s2, h2, theta2, w2 = run_gle_solver(
+            Delta=Delta, Ca=Ca, lambda_slip=lambda_slip, mu_r=mu_r,
+            theta0=theta0, w=w, output_dir=self.test_output_dir)
         
         # Warn if either solver didn't converge but still test reproducibility
         if not solution1.success:

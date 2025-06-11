@@ -19,7 +19,8 @@ The GLE provide the mathematical framework to connect these scales seamlessly.
 
 ### Core Implementation Files
 
-- **`GLE_solver.py`**: Python implementation of the GLE solver using scipy's odeint
+- **`GLE_solver.py`**: Python implementation of the GLE solver using scipy's solve_bvp with optimized parallel bisection refinement for finding critical Ca
+- **`GLE_continuation_hybrid.py`**: Advanced continuation solver that traces both solution branches using a hybrid approach: x0 parameterization for the lower branch and pseudo-arclength continuation for the upper branch
 - **`GLE_solver-GSL.c`**: Main C program entry point with comprehensive documentation
 - **`huh_scriven_velocity.py`**: Analyzes Huh-Scriven velocity fields near contact lines
 - **`compare_results.py`**: Compares outputs between Python and C implementations
@@ -52,9 +53,104 @@ All modules are implemented as header-only libraries with static inline function
 ## Python Implementation
 
 The Python implementation provides tools to solve the GLE and analyze related phenomena:
-- `GLE_solver.py` - Main solver using scipy's odeint
+- `GLE_solver.py` - Main solver using scipy's solve_bvp with automatic critical Ca finder using root-finding (NOT a continuation method)
+- `GLE_continuation_hybrid.py` - Advanced bifurcation analysis tool that captures both stable (lower) and unstable (upper) solution branches using true continuation methods
 - `huh_scriven_velocity.py` - Analyzes Huh-Scriven velocity fields near contact lines
 - `compare_results.py` - Compares outputs between Python and C implementations
+
+### Command-line Usage
+
+#### GLE Solver (finds critical Ca for single branch):
+```bash
+python GLE_solver.py --ca 0.01 --theta0 60 --delta 2.0 --lambda_slip 1e-5 --mu_r 1e-6
+```
+
+#### GLE Continuation Hybrid (traces both solution branches):
+```bash
+python GLE_continuation_hybrid.py --mu_r 1e-6 --lambda_slip 1e-4 --theta0 90 --delta 10.0
+```
+
+Parameters for `GLE_solver.py`:
+- `--ca`: Capillary number (default: 0.0246)
+- `--theta0`: Initial contact angle in degrees (default: 90)
+- `--delta`: Maximum s-value for solver (default: 1.0)
+- `--lambda_slip`: Slip length (default: 1e-4)
+- `--mu_r`: Viscosity ratio μ_g/μ_l (default: 1e-6)
+- `--w`: Curvature boundary condition at s=Δ (default: 0)
+- `--ngrid-init`: Initial number of grid points (default: 10000)
+- `--tolerance`: Tolerance for Ca_cr refinement (default: 1e-6)
+- `--gui`: Display plots in GUI mode instead of saving to files
+- `--output-dir`: Output directory for plots and data (default: output)
+
+Parameters for `GLE_continuation_hybrid.py`:
+- `--mu_r`: Viscosity ratio μ_g/μ_l (default: 1e-6)
+- `--lambda_slip`: Slip length (default: 1e-4)
+- `--theta0`: Initial contact angle in degrees (default: 90)
+- `--w`: Curvature boundary condition at s=Δ (default: 0)
+- `--delta`: Domain size (default: 10.0)
+- `--output-dir`: Output directory for plots and data (default: output)
+- `--workers`: Number of parallel workers (default: min(4, cpu_count))
+
+### Solver Details
+
+#### GLE_solver.py
+
+This solver uses `scipy.solve_bvp` with optimized parallel bisection refinement:
+
+1. **Grid Resolution**: The default grid uses 10000 points to properly capture steep gradients near the contact line, especially for small slip lengths. This can be adjusted via `--ngrid-init`.
+
+2. **Critical Capillary Number**: The solver automatically detects the critical Capillary number (Ca_cr) - the maximum Ca for which a steady-state solution exists. This critical value depends on:
+   - Initial contact angle (θ₀)
+   - Slip length (λ_slip) 
+   - Viscosity ratio (μ_r)
+   
+   When the requested Ca exceeds Ca_cr:
+   - The solver finds Ca_cr using a root-finding method (bisection/IQI)
+   - Returns the solution at Ca_cr (not at the requested Ca)
+   - Clearly indicates in the output and plots that Ca_cr is being used
+   - The plot title and parameter box show Ca_cr with a red highlight
+
+3. **Critical Ca Finding Method**: The critical Ca finder is implemented as a modular function `find_critical_ca_lower_branch()`:
+   - Activated automatically when direct solve fails
+   - Uses a two-stage approach: coarse search followed by refined bisection
+   - Starts with small Ca and increases to find where solver fails
+   - Tracks the evolution of θ_min and x_0 (position at θ_min) during search
+   - Stops when convergence fails, identifying Ca_cr
+   - Returns both the solution and the actual Ca used (either target Ca or Ca_cr)
+   - Generates plots: `pyGLE_profiles.png` (solution profiles) and `pyGLE_Ca_cr.png` (critical Ca search results)
+
+4. **Convergence Tips**: For challenging parameter regimes:
+   - The default 10000 grid points usually ensures convergence for Ca < Ca_cr
+   - For very small λ_slip (< 1e-6), consider increasing --ngrid-init
+   - The critical Ca typically ranges from 0.001 to 0.1 depending on parameters
+
+#### GLE_continuation_hybrid.py
+
+This advanced solver traces both solution branches using a hybrid approach:
+
+1. **Phase 1 - Lower Branch (x0 Parameterization)**:
+   - Uses x0 (position at θ_min) as the continuation parameter
+   - Employs parallel processing for efficiency
+   - Adaptive grid with dense sampling near the turning point
+   - Robust Newton's method with smart initial guesses from spline interpolation
+
+2. **Phase 2 - Upper Branch (Pseudo-arclength Continuation)**:
+   - Implements proper pseudo-arclength continuation to trace through turning points
+   - Uses predictor-corrector steps with perpendicular constraint
+   - Adaptive step sizing based on solution quality
+   - Can capture the unstable upper branch that standard methods miss
+
+3. **Key Features**:
+   - Automatically finds and refines the turning point location
+   - Generates bifurcation diagrams showing both branches
+   - Validates results with branch statistics
+   - Efficient parallel implementation for Phase 1
+   - Robust error handling and progress reporting
+
+4. **Output**:
+   - `bifurcation_diagram_hybrid.png`: Shows x0 vs Ca and θ_min vs Ca for both branches
+   - `both_branches_hybrid.csv`: Complete solution data for both branches
+   - Clear identification of stable (lower) and unstable (upper) branches
 
 ### Dependencies
 - Python 3.x
@@ -147,9 +243,18 @@ Both Python and C solvers generate output files in the `output/` directory:
 - `output/GLE_theta_profile_c.csv`: Contains s and theta_deg (angle in degrees)
 
 **Python Solver outputs:**
-- `output/data-python.csv`: Contains columns for s, h, and theta
-- `output/GLE_h_profile.png`: Visualization of film height profile
-- `output/GLE_theta_profile.png`: Visualization of contact angle profile
+
+*GLE_solver.py outputs:*
+- `output/pyGLE_solution.csv`: Contains columns for s, h, theta, w (curvature), and x
+- `output/pyGLE_profiles.png`: 2x2 subplot showing h(s), θ(s), θ(h), and x(h) profiles
+- `output/pyGLE_Ca_cr.png`: Shows θ_min vs Ca and x_0 vs Ca (when critical Ca search is used)
+- `output/ca_search_data.csv`: Contains Ca, θ_min, and x_0 data from critical Ca search
+
+*GLE_continuation_hybrid.py outputs:*
+- `output/bifurcation_diagram_hybrid.png`: Bifurcation diagrams showing both solution branches
+- `output/both_branches_hybrid.csv`: Complete data for both branches (Ca, x0, θ_min)
+
+*Comparison outputs:*
 - `output/comparison_python_vs_c.png`: Side-by-side comparison (when using `make compare`)
 
 ### Mathematical Formulation
@@ -171,6 +276,12 @@ Where:
 - `λ`: Navier slip length (molecular-scale parameter)
 - `μᵣ`: Viscosity ratio (gas/liquid)
 - `f(θ,μᵣ)`: Viscous dissipation function from wedge flow analysis
+
+### Key Solution Parameters
+
+- `x0`: The x-position where θ reaches its minimum value (θ_min). This is a key parameter for understanding the contact line structure.
+- `θ_min`: The minimum value of θ along the interface. When θ_min approaches 0, we are at the critical capillary number (Ca_cr).
+- `Ca_cr`: The critical capillary number - the maximum Ca for which a steady-state solution exists. Beyond this value, no steady solution exists.
 
 ### Boundary Conditions
 
