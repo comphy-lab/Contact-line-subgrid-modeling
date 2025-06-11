@@ -258,7 +258,7 @@ static inline double gradient_descent_omega0(shooting_context *ctx, double omega
  * 3. SOLUTION GENERATION:
  *    - Integrate ODEs with converged ω₀
  *    - Store solution at 1000 points along s ∈ [0, s_max]
- *    - Output arrays: s, h(s), θ(s)
+ *    - Output arrays: s, h(s), θ(s), ω(s)
  * 
  * 4. ERROR HANDLING:
  *    - Check for integration failures (unphysical solutions)
@@ -269,7 +269,7 @@ static inline int solve_gle_shooting_method_with_bracket(gle_parameters *params,
                                           double omega0_initial_guess,
                                           double initial_bracket_width,
                                           double max_bracket_width,
-                                          double **s_out, double **h_out, double **theta_out,
+                                          double **s_out, double **h_out, double **theta_out, double **omega_out,
                                           int *n_points) {
     // Set up shooting context
     shooting_context ctx;
@@ -381,8 +381,9 @@ generate_solution:
     *s_out = (double *)malloc(*n_points * sizeof(double));
     *h_out = (double *)malloc(*n_points * sizeof(double));
     *theta_out = (double *)malloc(*n_points * sizeof(double));
+    *omega_out = (double *)malloc(*n_points * sizeof(double));
 
-    if (!*s_out || !*h_out || !*theta_out) {
+    if (!*s_out || !*h_out || !*theta_out || !*omega_out) {
         fprintf(stderr, "Memory allocation failed\n");
         gsl_root_fsolver_free(solver);
         gsl_odeiv2_driver_free(ctx.driver);
@@ -401,6 +402,7 @@ generate_solution:
 
     (*h_out)[0] = ctx.h0;
     (*theta_out)[0] = ctx.theta0;
+    (*omega_out)[0] = omega0;
 
     for (int i = 1; i < *n_points; i++) {
         double s_target = (*s_out)[i];
@@ -412,9 +414,11 @@ generate_solution:
             free(*s_out);
             free(*h_out);
             free(*theta_out);
+            free(*omega_out);
             *s_out = NULL;
             *h_out = NULL;
             *theta_out = NULL;
+            *omega_out = NULL;
             *n_points = 0;
             gsl_root_fsolver_free(solver);
             gsl_odeiv2_driver_free(ctx.driver);
@@ -423,6 +427,7 @@ generate_solution:
 
         (*h_out)[i] = y[0];
         (*theta_out)[i] = y[1];
+        (*omega_out)[i] = y[2];
     }
 
     // Clean up
@@ -437,7 +442,7 @@ generate_solution:
  * Uses default bracket parameters based on the known solution behavior
  */
 static inline int solve_gle_shooting_method(gle_parameters *params, double s_max,
-                             double **s_out, double **h_out, double **theta_out,
+                             double **s_out, double **h_out, double **theta_out, double **omega_out,
                              int *n_points) {
     // Default parameters based on Python solution behavior
     double omega0_initial_guess = 82150.0;  // Near expected solution
@@ -448,7 +453,7 @@ static inline int solve_gle_shooting_method(gle_parameters *params, double s_max
                                                  omega0_initial_guess,
                                                  initial_bracket_width,
                                                  max_bracket_width,
-                                                 s_out, h_out, theta_out,
+                                                 s_out, h_out, theta_out, omega_out,
                                                  n_points);
 }
 

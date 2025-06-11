@@ -1,8 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
-import os
-import sys
 from functools import partial
 import pandas as pd
 
@@ -11,28 +9,10 @@ Ca = 1e-2  # Capillary number
 lambda_slip = 1e-7  # Slip length
 mu_r = 1e-3 # \mu_g/\mu_l
 
-# # Define f1, f2, and f3 functions
-# def f1(theta):
-#     return theta**2 - np.sin(theta)**2
-
-# def f2(theta):
-#     return theta - np.sin(theta) * np.cos(theta)
-
-# def f3(theta):
-#     return theta * (np.pi - theta) + np.sin(theta)**2
-
-# # Define f(theta, mu_r) function
-# def f(theta, mu_r):
-#     numerator = 2 * np.sin(theta)**3 * (mu_r**2 * f1(theta) + 2 * mu_r * f3(theta) + f1(np.pi - theta))
-#     denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) - f1(np.pi - theta) * f2(theta))
-#     return numerator / denominator
-
 # Initial conditions
 h0 = lambda_slip  # h at s = 0
 slope0 = 1  # theta at s = 0
 omega_bc = 0  # curvature boundary condition at s = \Delta, this needs to be not remain constant, but fed back from the DNS
-
-
 
 # Define the coupled ODEs system
 def GLE(x, y):
@@ -48,7 +28,6 @@ def GLE(x, y):
 # The guesses follow the known BCs when solved
 # The 3rd "known" BC is the curvature at h=\Delta, which is not known, but can be fed back from the DNS
 
-
 # Boundary conditions
 def boundary_conditions(ya, yb, omega_bc):
     # ya corresponds to s = 0, yb corresponds to s = 4*Delta
@@ -60,57 +39,39 @@ def boundary_conditions(ya, yb, omega_bc):
         omega_b - omega_bc         # w(Delta) = w_bc (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w_bc, comes from the DNS.
     ]
 
-# def run_solver_and_plot(GUI=False, output_dir='output'):
-    """Run the solver and either display or save plots
-
-    Args:
-        GUI (bool): If True, display plots. If False, save to files.
-        output_dir (str): Directory to save plots when GUI=False
-
-    Returns:
-        tuple: (solution, s_values, h_values, theta_values, w_values)
-    """
-    # # Set matplotlib backend based on GUI parameter
-    # if not GUI:
-    #     import matplotlib
-    #     matplotlib.use('Agg')  # Use non-interactive backend
-    
-    # # Create output directory if it doesn't exist (always create for CSV)
-    # os.makedirs(output_dir, exist_ok=True)
-
-    # Initial guess for the solution
-s_max = 10 # 4 microns, adjust as needed for your problem
+# Initial guess for the solution
+s_max = 10 # adjust as needed for your problem
 x_range_local = np.linspace(0, s_max, 100000)  # Define the range of s with finite values
 y_guess_local = np.zeros((3, x_range_local.size))  # Initial guess for [h, theta, w]
 y_guess_local[0, :] = np.linspace(h0, s_max, x_range_local.size)  # Linear guess for h
 y_guess_local[1, :] = slope0  # Initial guess for theta
 y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
 
-    # Solve the ODEs
-    # Use partial to pass omega_bc as a parameter to boundary_conditions
+# Solve the ODEs
+# Use partial to pass omega_bc as a parameter to boundary_conditions
 bc_with_w = partial(boundary_conditions, omega_bc=omega_bc)
 solution = solve_bvp(GLE, bc_with_w, x_range_local, y_guess_local, max_nodes=1000000)
 
-    # Extract the solution
+# Extract the solution
 x_values_local = solution.x
 h_values_local, alpha_values_local, omega_values_local = solution.y
 
 try:
-        data_path = 'Minkush data.csv'
-        df = pd.read_csv(data_path, delimiter=', ', engine='python')
-        x_csv = df.iloc[:, 0].values
-        h_csv = df.iloc[:, 1].values
-except Exception as e:
-        print(f"Failed to load CSV: {e}")
-        x_csv = h_csv = None    
+    data_path = 'Minkush data.csv'
+    df = pd.read_csv(data_path, delimiter=', ', engine='python')
+    x_csv = df.iloc[:, 0].values
+    h_csv = df.iloc[:, 1].values
+except (FileNotFoundError, pd.errors.ParserError) as e:
+    print(f"Failed to load CSV: {e}")
+    x_csv = h_csv = None    
     
-    # Plot h(s)
+# Plot h(s)
 fig, ax = plt.subplots(figsize=(12, 6))
 ax.plot(x_values_local, h_values_local, '-')
 if x_csv is not None and h_csv is not None:
     ax.plot(x_csv, h_csv, 'o', label='Minkush Data', markersize=4)
 
-    # Only plot h(s) vs s (no subplots)
+# Only plot h(s) vs s (no subplots)
 
 ax.set_xlabel('x', fontsize=12)
 ax.set_ylabel('h', fontsize=12)

@@ -125,10 +125,7 @@ Thumbs.db
 cache/
 *.log
 *.tmp
-
-# Generated output files
-output/
-test/test_output/
+**/*.pkl
 
 # Explicitly allow Claude files
 !.claude/
