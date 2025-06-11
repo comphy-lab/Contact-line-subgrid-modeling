@@ -56,7 +56,7 @@ double f_combined(double theta, double mu_r) {
     double f2_theta = f2(theta);
     double f2_pi_minus_theta = f2(M_PI - theta);
     
-    double denominator = 3.0 * (mu_r * f1_theta * f2_pi_minus_theta - f1_pi_minus_theta * f2_theta);
+    double denominator = 3.0 * (mu_r * f1_theta * f2_pi_minus_theta + f1_pi_minus_theta * f2_theta);
     
     /* Check for division by zero with a reasonable tolerance */
     if (fabs(denominator) < 1e-10 * fabs(numerator) || fabs(denominator) < DBL_EPSILON) {
