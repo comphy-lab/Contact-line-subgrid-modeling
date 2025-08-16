@@ -50,23 +50,10 @@ make run            # Runs ./gle_solver_gsl
 # Compare implementations
 make compare        # Runs both C and Python, generates comparison plots
 
-# Run tests
-make test           # C unit tests only
-./test/run_tests.sh # Both Python and C tests
-
 # Clean build artifacts
 make clean
 ```
 
-### Testing Framework
-```bash
-# Python tests with pytest
-pytest test/                    # From project root
-cd test && pytest -v          # Verbose output
-
-# All tests (comprehensive)
-./test/run_tests.sh            # Runs both Python and C test suites
-```
 
 ## Key Components
 
@@ -146,17 +133,13 @@ Where:
 │   ├── gle_ode_systems.h             # ODE systems
 │   ├── gle_shooting.h                # Numerical algorithms
 │   └── gle_io.h                      # I/O operations
-├── test/                             # Test suites
-│   ├── test_*.py                     # Python unit tests
-│   ├── test_*.c                      # C unit tests  
-│   └── run_tests.sh                  # Test orchestration
 ├── output/                           # Generated results
 └── build/                            # C build artifacts
 ```
 
 ## Dependencies
 
-**Python**: numpy, scipy, matplotlib, pytest
+**Python**: numpy, scipy, matplotlib
 **C**: GSL (≥2.5), OpenBLAS, standard C99 compiler
 
 ## Known Issues and Limitations
@@ -170,5 +153,5 @@ Where:
 
 - **Cross-validation**: Always compare Python and C results using `make compare`
 - **Parameter studies**: Modify physical constants in headers/global variables
-- **Debugging**: Use test suites to isolate issues before full solver runs
+- **Debugging**: Use direct solver runs to debug numerical issues
 - **Performance**: C implementation for production, Python for rapid prototyping
