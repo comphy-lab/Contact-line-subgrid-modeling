@@ -18,6 +18,7 @@ test_gle_solver_gsl
 GLE_solver_run
 test_gle_solver
 a.out
+**/*.pkl
 
 # Distribution / packaging
 .Python
@@ -126,8 +127,10 @@ cache/
 *.log
 *.tmp
 
+# Generated output files
+output/
+test/test_output/
 
 # Explicitly allow Claude files
-!.claude/
+.claude/
 !CLAUDE.md
-*.pkl
