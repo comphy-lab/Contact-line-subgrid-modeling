@@ -20,7 +20,8 @@ The GLE provide the mathematical framework to connect these scales seamlessly.
 ### Core Implementation Files
 
 - **`GLE_solver.py`**: Python implementation of the GLE solver using scipy's solve_bvp with optimized parallel bisection refinement for finding critical Ca
-- **`GLE_continuation_hybrid.py`**: Advanced continuation solver that traces both solution branches using a hybrid approach: x0 parameterization for the lower branch and pseudo-arclength continuation for the upper branch
+- **`GLE_continuation_v0.py`**: Simplified continuation using Ca-stepping only, fast and robust for finding Ca_cr but limited to monotonic branches (288 lines)
+- **`GLE_continuation_v1.py`**: Full pseudo-arclength continuation implementation with fold detection and branch analysis, but highly unreliable and often fails to converge (1025 lines)
 - **`GLE_solver-GSL.c`**: Main C program entry point with comprehensive documentation
 - **`huh_scriven_velocity.py`**: Analyzes Huh-Scriven velocity fields near contact lines
 - **`compare_results.py`**: Compares outputs between Python and C implementations
@@ -54,7 +55,8 @@ All modules are implemented as header-only libraries with static inline function
 
 The Python implementation provides tools to solve the GLE and analyze related phenomena:
 - `GLE_solver.py` - Main solver using scipy's solve_bvp with automatic critical Ca finder using root-finding (NOT a continuation method)
-- `GLE_continuation_hybrid.py` - Advanced bifurcation analysis tool that captures both stable (lower) and unstable (upper) solution branches using true continuation methods
+- `GLE_continuation_v0.py` - Simplified continuation using direct Ca-stepping, effectively finds Ca_cr but cannot go beyond it
+- `GLE_continuation_v1.py` - Full pseudo-arclength continuation with predictor-corrector scheme, but highly unreliable with frequent convergence failures
 - `huh_scriven_velocity.py` - Analyzes Huh-Scriven velocity fields near contact lines
 - `compare_results.py` - Compares outputs between Python and C implementations
 
@@ -65,9 +67,14 @@ The Python implementation provides tools to solve the GLE and analyze related ph
 python GLE_solver.py --ca 0.01 --theta0 60 --delta 2.0 --lambda_slip 1e-5 --mu_r 1e-6
 ```
 
-#### GLE Continuation Hybrid (traces both solution branches):
+#### GLE Continuation v0 (simple Ca-stepping):
 ```bash
-python GLE_continuation_hybrid.py --mu_r 1e-6 --lambda_slip 1e-4 --theta0 90 --delta 10.0
+python GLE_continuation_v0.py --mu_r 1e-6 --lambda_slip 1e-4 --theta0 10 --Ca_max 0.1
+```
+
+#### GLE Continuation v1 (full pseudo-arclength continuation):
+```bash
+python GLE_continuation_v1.py --mu_r 1.0 --lambda_slip 1e-4 --theta0 10 --Ca_target 0.1
 ```
 
 Parameters for `GLE_solver.py`:
@@ -82,14 +89,26 @@ Parameters for `GLE_solver.py`:
 - `--gui`: Display plots in GUI mode instead of saving to files
 - `--output-dir`: Output directory for plots and data (default: output)
 
-Parameters for `GLE_continuation_hybrid.py`:
-- `--mu_r`: Viscosity ratio μ_g/μ_l (default: 1e-6)
+Parameters for `GLE_continuation_v0.py` (simple Ca-stepping):
+- `--mu_r`: Viscosity ratio (default: 1.0)
 - `--lambda_slip`: Slip length (default: 1e-4)
-- `--theta0`: Initial contact angle in degrees (default: 90)
-- `--w`: Curvature boundary condition at s=Δ (default: 0)
-- `--delta`: Domain size (default: 10.0)
-- `--output-dir`: Output directory for plots and data (default: output)
-- `--workers`: Number of parallel workers (default: min(4, cpu_count))
+- `--theta0`: Initial contact angle in degrees (default: 10)
+- `--Ca_max`: Maximum Ca to reach (default: 0.1)
+- `--Delta`: Domain size (default: 10.0)
+- `--N_points`: Number of mesh points (default: 10000)
+
+Parameters for `GLE_continuation_v1.py` (pseudo-arclength):
+- `--mu_r`: Viscosity ratio (default: 1.0)
+- `--lambda_slip`: Slip length (default: 1e-4)
+- `--theta0`: Initial contact angle in degrees (default: 10)
+- `--Ca_target`: Target Capillary number (default: 0.1)
+- `--Delta`: Domain size (default: 10.0)
+- `--N_points`: Number of mesh points (default: 10000)
+- `--ds_init`: Initial arc length step (default: 0.1)
+- `--max_steps`: Maximum continuation steps (default: 500)
+- `--output`: Output filename (default: continuation_results.pkl)
+- `--format`: Output format pickle/h5 (default: pickle)
+- `--plot`: Generate plots flag
 
 ### Solver Details
 
@@ -124,33 +143,69 @@ This solver uses `scipy.solve_bvp` with optimized parallel bisection refinement:
    - For very small λ_slip (< 1e-6), consider increasing --ngrid-init
    - The critical Ca typically ranges from 0.001 to 0.1 depending on parameters
 
-#### GLE_continuation_hybrid.py
+#### GLE_continuation_v0.py
 
-This advanced solver traces both solution branches using a hybrid approach:
+This simplified solver provides basic continuation functionality for finding Ca_cr:
 
-1. **Phase 1 - Lower Branch (x0 Parameterization)**:
-   - Uses x0 (position at θ_min) as the continuation parameter
-   - Employs parallel processing for efficiency
-   - Adaptive grid with dense sampling near the turning point
-   - Robust Newton's method with smart initial guesses from spline interpolation
+1. **Simple Ca-stepping**:
+   - Direct increment of Ca parameter
+   - No arc-length parameterization
+   - Uses previous solution as initial guess
 
-2. **Phase 2 - Upper Branch (Pseudo-arclength Continuation)**:
-   - Implements proper pseudo-arclength continuation to trace through turning points
-   - Uses predictor-corrector steps with perpendicular constraint
-   - Adaptive step sizing based on solution quality
-   - Can capture the unstable upper branch that standard methods miss
+2. **Key Features**:
+   - Fixed mesh throughout computation (no interpolation issues)
+   - Adaptive Ca step size based on θ_min changes
+   - Automatic stopping at critical Ca
+   - Minimal code complexity (288 lines)
 
-3. **Key Features**:
-   - Automatically finds and refines the turning point location
-   - Generates bifurcation diagrams showing both branches
-   - Validates results with branch statistics
-   - Efficient parallel implementation for Phase 1
-   - Robust error handling and progress reporting
+3. **Use Cases**:
+   - Finding critical Ca where solutions cease to exist
+   - Quick parameter studies up to Ca_cr
+   - Cases where Ca increases monotonically
+   - Rapid prototyping
 
-4. **Output**:
-   - `bifurcation_diagram_hybrid.png`: Shows x0 vs Ca and θ_min vs Ca for both branches
-   - `both_branches_hybrid.csv`: Complete solution data for both branches
-   - Clear identification of stable (lower) and unstable (upper) branches
+4. **Limitations**:
+   - Cannot continue beyond Ca_cr
+   - No fold detection or branch switching
+   - Limited to monotonic solution branches
+
+5. **Output**:
+   - Two-panel plot: δX_cl vs Ca and θ_min vs Ca
+   - CSV file with continuation data
+   - Clear progress reporting
+
+#### GLE_continuation_v1.py
+
+This solver attempts full pseudo-arclength continuation but is highly unreliable:
+
+1. **Pseudo-arclength Method**:
+   - Predictor-corrector scheme with perpendicular constraint
+   - Extended system formulation for arc-length parameterization
+   - Tangent computation using secant method
+   - Newton iteration for corrector steps
+
+2. **Advanced Features**:
+   - Automatic fold point detection using multiple indicators
+   - Branch analysis with eigenvalue computation (placeholder)
+   - Adaptive step size control based on solution behavior
+   - Comprehensive visualization (4-panel plots)
+   - Export to pickle or HDF5 format
+
+3. **Major Issues**:
+   - Frequently fails to converge in corrector steps
+   - Numerical instabilities near turning points
+   - Inconsistent mesh handling causes errors
+   - Often terminates prematurely
+
+4. **Not Recommended**:
+   - This implementation kept for reference/debugging purposes only
+   - No reliable alternative currently available for full bifurcation analysis
+
+5. **Output** (when it works):
+   - Multi-panel plots showing bifurcation diagrams, profiles, and continuation path
+   - Individual plots for each analysis type
+   - Complete branch data in pickle/h5 format
+   - Detailed logging of continuation progress
 
 ### Dependencies
 - Python 3.x
@@ -250,9 +305,15 @@ Both Python and C solvers generate output files in the `output/` directory:
 - `output/pyGLE_Ca_cr.png`: Shows θ_min vs Ca and x_0 vs Ca (when critical Ca search is used)
 - `output/ca_search_data.csv`: Contains Ca, θ_min, and x_0 data from critical Ca search
 
-*GLE_continuation_hybrid.py outputs:*
-- `output/bifurcation_diagram_hybrid.png`: Bifurcation diagrams showing both solution branches
-- `output/both_branches_hybrid.csv`: Complete data for both branches (Ca, x0, θ_min)
+*GLE_continuation_v0.py outputs:*
+- `output/simple_continuation_mu{μ_r}_lambda{λ}.png`: 2-panel plot (δX_cl and θ_min vs Ca)
+- `output/simple_continuation_mu{μ_r}_lambda{λ}.csv`: Continuation data (Ca, θ_min, δX_cl)
+
+*GLE_continuation_v1.py outputs:*
+- `output/continuation_mu{μ_r}_lambda{λ}_theta{θ0}.png`: 4-panel comprehensive plot
+- `output/continuation_{type}_mu{μ_r}_lambda{λ}_theta{θ0}.png`: Individual plots for each panel
+- `output/continuation_results.pkl` or `.h5`: Complete branch data with solutions
+- Fold point detection and branch analysis included (when solver succeeds)
 
 *Comparison outputs:*
 - `output/comparison_python_vs_c.png`: Side-by-side comparison (when using `make compare`)
@@ -432,6 +493,24 @@ The solution profiles h(s) and θ(s) reveal the multiscale structure:
    - ω → 0 (matches outer lubrication solution)
 
 The parameter f(θ,μᵣ) encodes how viscous dissipation depends on the local interface configuration and viscosity contrast.
+
+## Choosing the Right Continuation Solver
+
+### Use GLE_continuation_v0.py when:
+- You need to quickly find Ca_cr (critical capillary number)
+- You're doing parameter studies up to the critical point
+- The solution branch is expected to be monotonic in Ca
+- Speed and reliability are more important than completeness
+
+### Avoid GLE_continuation_v1.py:
+- This solver is highly unreliable and often fails
+- Attempts full pseudo-arclength continuation but has serious convergence issues
+- Only kept for reference/debugging purposes
+
+## Important Notes on Continuation Solvers
+
+- **GLE_continuation_v0.py**: Works well for finding Ca_cr but cannot continue beyond it. This is the most reliable solver for determining the critical capillary number.
+- **GLE_continuation_v1.py**: Attempts full pseudo-arclength continuation but has serious convergence issues. Not recommended for production use.
 
 ## Applications
 
