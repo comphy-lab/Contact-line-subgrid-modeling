@@ -109,8 +109,6 @@ python GLE_continuation_v4.5.py --mu_r 1e-6 --lambda_slip 1e-3 --theta0 60
 # Run the Huh-Scriven velocity analysis
 python huh_scriven_velocity.py
 
-# Run tests
-pytest test/
 ```
 
 ## Mathematical Context
@@ -166,7 +164,6 @@ from find_x0_utils import find_x0_and_theta_min
 
 ### Running Large Computations
 - Both GLE_solver.py and GLE_critical_ca_advanced.py can take significant time to run
-- For testing, use the test scripts in test/ folder instead of running directly
 - Monitor output for progress indicators
 - The advanced finder shows detailed progress during execution
 

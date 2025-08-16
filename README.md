@@ -36,19 +36,10 @@ All modules are implemented as header-only libraries with static inline function
 - **`gle_io.h`**: Input/output operations for data files
 - **`gle_optimization.h`**: Stub header for backward compatibility
 
-### Test Files
-
-- **`test/test_GLE_solver.py`**: Python unit tests
-- **`test/test_GLE_solver-GSL.c`**: C unit tests with colorful output
-- **`test/test_integration.py`**: Integration tests comparing C and Python results
-- **`test/test_huh_scriven_velocity.py`**: Tests for velocity field analysis
-- **`test/run_tests.sh`**: Shell script to run all tests
-
 ### Build System
 
 - **`Makefile`**: Build configuration for C implementation
 - **`requirements-python.txt`**: Python dependencies
-- **`pytest.ini`**: Pytest configuration
 
 ## Python Implementation
 
@@ -157,25 +148,12 @@ This advanced solver traces both solution branches using a hybrid approach:
 - NumPy
 - SciPy
 - Matplotlib
-- pytest (for testing)
 
 Install dependencies using:
 ```bash
 pip install -r requirements-python.txt
 ```
 
-### Running Tests (Python)
-To run the Python unit tests:
-```bash
-# From the project root directory
-cd test
-sh run_tests.sh
-```
-
-Or run pytest directly:
-```bash
-pytest test/
-```
 
 ## C Implementation (`GLE_solver-GSL`)
 
@@ -356,15 +334,6 @@ This will:
 
 The comparison script generates visualizations showing the agreement between the two implementations.
 
-### Running Tests
-
-```bash
-# Run C tests only
-make test
-
-# Run all tests (Python and C)
-sh test/run_tests.sh
-```
 
 ### Troubleshooting
 
@@ -406,7 +375,6 @@ make help
 
 Shows all available targets:
 - `make all` - Build the solver
-- `make test` - Build and run tests
 - `make run` - Run the solver
 - `make compare` - Run both C and Python solvers
 - `make clean` - Clean build artifacts
