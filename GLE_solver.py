@@ -212,24 +212,26 @@ def create_solution_plots(solution, Ca: float, mu_r: float, lambda_slip: float,
 
 
 def run_solver_and_plot(**kwargs):
-  """Run solver and generate plots (compatibility wrapper)."""
-  Ca = kwargs.get('Ca', DEFAULT_CA)
-  mu_r = kwargs.get('mu_r', DEFAULT_MU_R)
-  lambda_slip = kwargs.get('lambda_slip', DEFAULT_LAMBDA_SLIP)
-  theta0 = kwargs.get('theta0', DEFAULT_THETA0)
-  w = kwargs.get('w', DEFAULT_W)
-  Delta = kwargs.get('Delta', DEFAULT_DELTA)
-  ngrid = kwargs.get('ngrid', DEFAULT_NGRID)
-  output_dir = kwargs.get('output_dir', 'output')
+    """Run solver and generate plots (compatibility wrapper)."""
+    Ca = kwargs.get('Ca', DEFAULT_CA)
+    mu_r = kwargs.get('mu_r', DEFAULT_MU_R)
+    lambda_slip = kwargs.get('lambda_slip', DEFAULT_LAMBDA_SLIP)
+    theta0 = kwargs.get('theta0', DEFAULT_THETA0)
+    w = kwargs.get('w', DEFAULT_W)
+    Delta = kwargs.get('Delta', DEFAULT_DELTA)
+    ngrid = kwargs.get('ngrid', DEFAULT_NGRID)
+    output_dir = kwargs.get('output_dir', 'output')
 
-  solution, _ = solve_gle(Ca, mu_r, lambda_slip, theta0, w, Delta, ngrid)
-  if solution is not None:
-    create_solution_plots(solution, Ca, mu_r, lambda_slip,
-                          theta0, Delta, output_dir)
-  return solution, (solution.x if solution else []), (
-    solution.y[0] if solution else []), (
-    solution.y[1] if solution else []), (
-    solution.y[2] if solution else [])
+    solution, _ = solve_gle(Ca, mu_r, lambda_slip, theta0, w, Delta, ngrid)
+    if solution is not None:
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        create_solution_plots(solution, Ca, mu_r, lambda_slip,
+                              theta0, Delta, output_dir)
+    return solution, (solution.x if solution else []), (
+        solution.y[0] if solution else []), (
+        solution.y[1] if solution else []), (
+        solution.y[2] if solution else [])
 
 
 def main():
