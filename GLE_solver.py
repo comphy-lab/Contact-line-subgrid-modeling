@@ -74,7 +74,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     if not GUI:
         import matplotlib
         matplotlib.use('Agg')  # Use non-interactive backend
-    
+
     # Create output directory if it doesn't exist (always create for CSV)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -100,46 +100,46 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
 
     # Plot the results with nice styling
     plt.style.use('seaborn-v0_8-darkgrid')
-    
+
     # Define color
     solver_color = '#1f77b4'  # Blue
-    
+
     # First create the combined plot
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-    
+
     # Plot h(s)
-    ax1.plot(s_values_local, h_values_local, '-', 
+    ax1.plot(s_values_local, h_values_local, '-',
              color=solver_color, linewidth=2.5)
     ax1.set_xlabel('x ', fontsize=12)
     ax1.set_ylabel('h(s) ', fontsize=12)
     ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     ax1.set_xlim(0, 10)
-    
+
     # Add text box with parameters
     textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
     ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
              verticalalignment='top', bbox=props)
-    
+
     # Plot theta(s)
-    ax2.plot(s_values_local, theta_values_deg, '-', 
+    ax2.plot(s_values_local, theta_values_deg, '-',
              color=solver_color, linewidth=2.5)
     sth = np.logspace(-3, 1, 100)
-    ThetaTh = pow(theta0**3 + 9*Ca*np.log(sth/lambda_slip), 1/3)/np.pi*180 
+    ThetaTh = pow(theta0**3 + 9*Ca*np.log(sth/lambda_slip), 1/3)/np.pi*180
     ax2.plot(sth, ThetaTh, 'k--')
     ax2.set_xlabel('s [μm]', fontsize=12)
     ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
     ax2.set_xlim(0, 10)
-    
+
     # Add initial condition text
     ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
              bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
-    
+
     plt.tight_layout()
-    
+
     if GUI:
         plt.show()
     else:
