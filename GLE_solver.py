@@ -55,7 +55,7 @@ mu_r = 1e-3 # \mu_g/\mu_l (viscosity ratio: gas/liquid)
 # - l_cap is the dimensionless capillary length = l_cap_dimensional/lambda_slip_dimensional
 # Alternatively, capillary length normalization can be used by setting l_cap = 1
 lambda_slip = 1e0  # Slip length (= 1 for normalization by slip length)
-l_cap = 1e6 # Dimensionless capillary length (l_cap_dim/lambda_slip_dim)
+l_cap = 1e6 # Dimensionless capillary length (l_cap_dim/lambda_slip_dim) - controls gravity effects in vertical plate
 s_max = l_cap # maximum s/l* -> for receeding cases, to capture the dip, we need to go beyond the capillary length
 
 N_grid = min(1000000, int(s_max/lambda_slip)) # Number of grid points (s_max/lambda_slip in dimensionless units)
@@ -87,7 +87,7 @@ def GLE(s, y):
     h, theta, omega = y
     dh_ds = np.sin(theta)                                                    # Kinematic condition
     dtheta_ds = omega                                                        # Geometric relation
-    domega_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)/l_cap**2  # Momentum balance + gravity (vertical plate)
+    domega_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)/l_cap**2  # Momentum balance + vertical gravity term
     return [dh_ds, dtheta_ds, domega_ds]
 
 # Set up the solver parameters
