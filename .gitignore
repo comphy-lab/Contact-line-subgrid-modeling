@@ -134,3 +134,6 @@ test/test_output/
 # Explicitly allow Claude files
 .claude/
 !CLAUDE.md
+
+# Cursor AI agent configuration
+**/.cursor
