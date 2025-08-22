@@ -7,8 +7,24 @@ from functools import partial
 
 #Parameters
 Ca = 0.00972  # Capillary number
-lambda_slip = 2e-8  # Slip length
 mu_r = 1e-3 # \mu_g/\mu_l
+
+# Length scales for normalization
+# NOTE: This implementation uses slip length normalization (lambda_slip = 1)
+# All dimensional lengths are normalized by the slip length:
+# - h, s are in units of lambda_slip  
+# - l_cap is the dimensionless capillary length = l_cap_dimensional/lambda_slip_dimensional
+# Alternatively, capillary length normalization can be used by setting l_cap = 1
+lambda_slip = 1e0  # Slip length (= 1 for normalization by slip length)
+l_cap = 1e6 # Dimensionless capillary length (l_cap_dim/lambda_slip_dim)
+s_max = l_cap # maximum s/l* -> for receeding cases, to capture the dip, we need to go beyond the capillary length
+
+N_grid = min(1000000, int(s_max/lambda_slip)) # Number of grid points (s_max/lambda_slip in dimensionless units)
+
+# Initial conditions  
+h0 = lambda_slip  # h at s = lambda_slip (film thickness at start of domain)
+theta0 = 72*np.pi/180  # theta at s = 0
+theta_end = 90*np.pi/180  # theta at s = Delta (90 degrees)
 
 # Define f1, f2, and f3 functions
 def f1(theta):
@@ -26,10 +42,6 @@ def f(theta, mu_r):
     denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) + f1(np.pi - theta) * f2(theta))
     return numerator / denominator
 
-# Initial conditions
-h0 = lambda_slip  # h at s = 0
-theta0 = 72*np.pi/180  # theta at s = 0
-theta_end = 90*np.pi/180  # theta at s = Delta (90 degrees)
 
 # Define the coupled ODEs system
 def GLE(s, y):
