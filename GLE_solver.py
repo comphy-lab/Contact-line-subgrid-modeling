@@ -1,3 +1,42 @@
+"""
+Generalized Lubrication Equations (GLE) Solver for Plate Withdrawal Problem
+
+This code solves the GLE system for a vertical plate withdrawing from a liquid bath.
+The vertical plate geometry is why the gravitational term appears as np.cos(theta) in the
+momentum equation (line 51) - gravity acts vertically downward.
+
+PHYSICAL PROBLEM:
+- A vertical plate is withdrawn from a liquid bath at constant velocity
+- A thin liquid film is entrained on the plate surface
+- Near the contact line, molecular-scale physics becomes important
+- The GLE system captures the transition from molecular to continuum scales
+
+ODE SYSTEM (3 coupled equations):
+  dh/ds = sin(θ)                                               [Kinematic condition]
+  dθ/ds = ω                                                    [Geometric relation]  
+  dω/ds = 3*Ca*f(θ,μᵣ)/(h*(h+3*λ)) - cos(θ)/l_cap²          [Momentum balance + gravity]
+
+Where:
+- s: arc length coordinate along the interface (integration variable)
+- h(s): film thickness profile
+- θ(s): interface angle with respect to the substrate
+- ω(s): interface curvature (dθ/ds)
+- Ca: Capillary number (viscous/surface tension forces ratio)
+- λ: slip length (molecular scale parameter)
+- μᵣ: viscosity ratio (gas/liquid)
+- f(θ,μᵣ): viscous dissipation function from wedge flow analysis
+- l_cap: capillary length
+
+BOUNDARY CONDITIONS:
+- At s = λ_slip (contact line): h(λ_slip) = λ_slip, θ(λ_slip) = θ₀
+- At s = s_max (far field): ω(s_max) = 0 (flat far-field assumption)
+
+INTEGRATION DOMAIN:
+- Integration proceeds from s = λ_slip to s = s_max
+- This avoids the contact line singularity at s = 0
+- The slip length λ_slip provides the molecular cutoff scale
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
