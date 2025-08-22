@@ -6,9 +6,23 @@ import sys
 from functools import partial
 
 #Parameters
-Ca = 0.00246  # Capillary number
-lambda_slip = 1e-4  # Slip length
+Ca = 0.0132  # Capillary number
 mu_r = 1e-3 # \mu_g/\mu_l
+s_max = 1e6 # maximum s/l*
+
+# Length scales for normalization
+# NOTE: The normalization length scale is determined by which of lambda_slip or l_cap equals 1
+# - If lambda_slip = 1, then all lengths are normalized by the slip length
+# - If l_cap = 1, then all lengths are normalized by the capillary length
+lambda_slip = 1e0  # Slip length (normalization length scale when = 1)
+l_cap = 1e6 # Capillary length (normalization length scale when = 1)
+N_grid = min(1000000, int(s_max/lambda_slip)) # Number of grid points
+
+# Initial conditions
+h0 = lambda_slip  # h at s = 0
+theta0 = np.pi/2  # theta at s = 0
+omega_at_smax = 0  # omega at s = s_max, for now, we set it to 0
+
 
 # Define f1, f2, and f3 functions
 def f1(theta):
@@ -26,38 +40,29 @@ def f(theta, mu_r):
     denominator = 3 * (mu_r * f1(theta) * f2(np.pi - theta) + f1(np.pi - theta) * f2(theta))
     return numerator / denominator
 
-# Initial conditions
-h0 = lambda_slip  # h at s = 0
-theta0 = np.pi/3  # theta at s = 0
-w = 0  # curvature boundary condition at s = \Delta, this needs to be not remain constant, but fed back from the DNS
-
-
-
-# Define the coupled ODEs system
+# Define the coupled ODEs system with state: y = [h, theta, omega]
 def GLE(s, y):
     h, theta, omega = y
-    dh_ds = np.sin(theta) # dh/ds = sin(theta)
-    dt_ds = omega # omega = dtheta/ds
-    dw_ds = - 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)
-    return [dh_ds, dt_ds, dw_ds]
+    dh_ds = np.sin(theta)
+    dtheta_ds = omega
+    domega_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)/l_cap**2
+    return [dh_ds, dtheta_ds, domega_ds]
 
 # Set up the solver parameters
 # Need to set the initial conditions for the ODEs. Since we are setting them at different points, we need 3 as fixed, 3 as guesses
-# \Theta at s=0, h at s=0, dTheta/ds at h=\Delta
+# \Theta at s=0, h at s=0, omega at s=s_max
 # The guesses follow the known BCs when solved
-# The 3rd "known" BC is the curvature at h=\Delta, which is not known, but can be fed back from the DNS
+# The 3rd "known" BC is the curvature at s=s_max, which is not known, but can be fed back from the DNS
 
-Delta = 1e-4  # Miminum grid cell size
-
-# Boundary conditions
-def boundary_conditions(ya, yb, w_bc):
-    # ya corresponds to s = 0, yb corresponds to s = 4*Delta
-    h_a, theta_a, w_a = ya # boundary conditions at s = 0
-    h_b, theta_b, w_b = yb # boundary conditions at s = Delta
+def boundary_conditions(ya, yb, omega_bc):
+    # ya corresponds to s = lambda_slip (start of domain)
+    # yb corresponds to s = s_max (end of domain)
+    h_a, theta_a, omega_a = ya 
+    h_b, theta_b, omega_b = yb 
     return [
-        theta_a - theta0,      # theta(0) = pi/6, this forces theta_a to be essentially theta0. We set.
-        h_a - lambda_slip,      # h(0) = lambda_slip, this forces h_a to be essentially lambda_slip. We set.
-        w_b - w_bc         # w(Delta) = w_bc (curvature at s=Delta), this forces w_b (curvature at s=Delta) to be essentially w_bc, comes from the DNS.
+        h_a - h0,              # h(lambda_slip) = h0 = lambda_slip
+        theta_a - theta0,      # theta(lambda_slip) = theta0
+        omega_b - omega_bc     # omega(s_max) = omega_bc (from DNS or set to 0)
     ]
 
 def run_solver_and_plot(GUI=False, output_dir='output'):
@@ -79,24 +84,26 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     os.makedirs(output_dir, exist_ok=True)
 
     # Initial guess for the solution
-    s_range_local = np.linspace(0, 10, 1000)  # Define the range of s
+    s_range_local = np.logspace(np.log10(lambda_slip), np.log10(s_max), N_grid)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
-    y_guess_local[0, :] = np.linspace(lambda_slip, 10, s_range_local.size)  # Linear guess for h
-    y_guess_local[1, :] = np.pi / 2  # Initial guess for theta
-    y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
+    y_guess_local[0, :] = np.logspace(np.log10(h0), np.log10(s_max), s_range_local.size)  # Linear guess for h
+    y_guess_local[1, :] = theta0  # Initial guess for theta
+    y_guess_local[2, :] = 0          # Initial guess for omega
 
     # Solve the ODEs
-    # Use partial to pass w as a parameter to boundary_conditions
-    bc_with_w = partial(boundary_conditions, w_bc=w)
-    solution = solve_bvp(GLE, bc_with_w, s_range_local, y_guess_local, max_nodes=1000000)
+    # Use partial to pass omega_bc as a parameter to boundary_conditions
+    bc_with_omega_bc = partial(boundary_conditions, omega_bc=omega_at_smax)
+    solution = solve_bvp(GLE, bc_with_omega_bc, s_range_local, y_guess_local, max_nodes=1000000)
 
     # Extract the solution
     s_values_local = solution.x
-    h_values_local, theta_values_local, w_values_local = solution.y
+    h_values_local, theta_values_local, omega_values_local = solution.y
     theta_values_deg = theta_values_local*180/np.pi
 
+    # Convert s to x. dx = cos(theta) ds
     x_values_local = np.zeros_like(s_values_local)
-    x_values_local[1:] = np.cumsum(np.diff(s_values_local) * np.cos(theta_values_local[:-1]))
+    theta_mid = (theta_values_local[:-1] + theta_values_local[1:]) / 2
+    x_values_local[1:] = np.cumsum(np.diff(s_values_local) * np.cos(theta_mid))
 
     # Plot the results with nice styling
     plt.style.use('seaborn-v0_8-darkgrid')
@@ -108,13 +115,14 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
     # Plot h(s)
-    ax1.plot(s_values_local, h_values_local, '-',
+    ax1.plot(x_values_local, h_values_local, '-',
              color=solver_color, linewidth=2.5)
-    ax1.set_xlabel('x ', fontsize=12)
-    ax1.set_ylabel('h(s) ', fontsize=12)
+    ax1.set_xlabel('$x(s/l^*)$ ', fontsize=12)
+    ax1.set_ylabel('$h(s/l^*)$ ', fontsize=12)
     ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim(0, 10)
+    ax1.set_xlim(0, np.max(x_values_local))
+    ax1.set_ylim(0, np.max(h_values_local))
 
     # Add text box with parameters
     textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'
@@ -123,16 +131,17 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
              verticalalignment='top', bbox=props)
 
     # Plot theta(s)
-    ax2.plot(s_values_local, theta_values_deg, '-',
+    ax2.plot(s_values_local, theta_values_deg, '.',
              color=solver_color, linewidth=2.5)
-    sth = np.logspace(-3, 1, 100)
-    ThetaTh = pow(theta0**3 + 9*Ca*np.log(sth/lambda_slip), 1/3)/np.pi*180
-    ax2.plot(sth, ThetaTh, 'k--')
-    ax2.set_xlabel('s [μm]', fontsize=12)
-    ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
+    ax2.set_xlabel('$s/l^*$', fontsize=12)
+    ax2.set_ylabel('$\\theta(s/l^*)$ [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(0, 10)
+    ax2.set_xlim(lambda_slip, s_max)
+    ax2.set_ylim(np.min(theta_values_deg), np.max(theta_values_deg))
+    # log-log for ax2
+    ax2.set_xscale('log')
+    ax2.set_yscale('log')
 
     # Add initial condition text
     ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
@@ -152,7 +161,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     np.savetxt(csv_path, csv_data, delimiter=',', header='s,h,theta', comments='')
     print(f"Data saved to: {csv_path}")
 
-    return solution, s_values_local, h_values_local, theta_values_local, w_values_local
+    return solution, s_values_local, h_values_local, theta_values_local, omega_values_local
 
 # Main execution
 if __name__ == "__main__":
