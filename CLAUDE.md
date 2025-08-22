@@ -11,9 +11,10 @@ This repository implements dual-language (Python and C) solutions for contact li
 The codebase consists of two complete implementations that solve the same mathematical problem using different numerical approaches:
 
 ### Python Implementation (Development/Prototyping)
-- **Primary files**: `GLE_solver.py`, `GLE_solver_v2.py` (uses different numerical method)
-- **Method**: Initial Value Problem (IVP) using scipy's `odeint` and `solve_bvp`
+- **Primary files**: `GLE_solver.py` (vertical plate), `GLE_solver_v3.py` (horizontal plate), `GLE_solver_v4.py` (h-based BC)
+- **Method**: Boundary Value Problem (BVP) using scipy's `solve_bvp`
 - **Purpose**: Rapid prototyping, parameter exploration, visualization
+- **Variants**: Different geometries and boundary condition formulations
 
 ### C Implementation (Performance/Production) 
 - **Primary file**: `GLE_solver-GSL.c` 
@@ -34,8 +35,9 @@ The codebase consists of two complete implementations that solve the same mathem
 pip install -r requirements-python.txt
 
 # Run Python solvers
-python GLE_solver.py           # Original IVP approach
-python GLE_solver_v2.py        # BVP approach with solve_bvp
+python GLE_solver.py           # Vertical plate withdrawal (BVP)
+python GLE_solver_v3.py        # Horizontal plate immersion (BVP)
+python GLE_solver_v4.py        # H-based boundary condition (iterative BVP)
 python huh_scriven_velocity.py # Velocity field analysis
 ```
 
@@ -59,21 +61,29 @@ make clean
 
 ### Core Solvers
 
-**GLE_solver.py**: Original Python implementation
-- Uses `scipy.integrate.odeint` for initial value problems
-- Functions: `f1(theta)`, `f2(theta)`, `f3(theta)`, `f(theta, R)`, `GLE(y)`
-- Known convergence issues for certain parameter regimes
+**GLE_solver.py**: Vertical plate withdrawal
+- Physical setup: Plate withdrawn vertically from liquid bath
+- Gravity term: `-cos(θ)/l_cap²` in momentum equation
+- Boundary conditions: `θ(s_max) = 90°`, `ω(s_max) = 0`
+- Uses `scipy.integrate.solve_bvp` for boundary value problem
+
+**GLE_solver_v3.py**: Horizontal plate immersion  
+- Physical setup: Horizontal plate immersed into liquid bath
+- Gravity term: `+sin(θ)/l_cap²` in momentum equation (different geometry)
+- Boundary conditions: `θ(s_max) = 90°` (vertical interface at far field)
+- Different parameter set optimized for horizontal geometry
+
+**GLE_solver_v4.py**: H-based boundary condition
+- Same horizontal geometry as v3
+- Novel BC: `θ(h=h_end) = θ_end` instead of fixed arc length
+- Uses iterative shooting method with root finding
+- More physically meaningful for coating applications where film thickness is controlled
 
 **GLE_solver-GSL.c**: High-performance C implementation  
 - Adaptive Runge-Kutta-Fehlberg integration via GSL
 - Enhanced shooting method with bracketing and gradient descent fallback
 - Robust handling of singularities and boundary conditions
 - Outputs compatible CSV files for comparison
-
-**GLE_solver_v2.py**: Alternative Python approach
-- Uses `scipy.integrate.solve_bvp` for boundary value problems
-- Different parameter set (Ca=0.0246 vs Ca=1.0)
-- May have better convergence properties
 
 ### Analysis Tools
 
@@ -103,7 +113,7 @@ The Generalized Lubrication Equations (GLE) system:
 ```
 dh/ds = sin(θ)                                    
 dθ/ds = ω                                         
-dω/ds = 3Ca·f(θ,μᵣ)/(h(h+3λ)) - cos(θ)          
+dω/ds = 3Ca·f(θ,μᵣ)/(h(h+3λ)) ± gravity_term          
 ```
 
 Where:
@@ -115,26 +125,34 @@ Where:
 - `λ`: Slip length (molecular scale parameter)
 - `μᵣ`: Viscosity ratio (gas/liquid)
 - `f(θ,μᵣ)`: Viscous dissipation function from wedge flow analysis
+- `gravity_term`: `-cos(θ)/l_cap²` (vertical) or `+sin(θ)/l_cap²` (horizontal)
 
-### Boundary Conditions
-- Contact line: `θ(0) = θ₀`, `h(0) = λ`
-- Far field: `ω(s_max) = 0` (curvature vanishes)
+### Boundary Condition Variants
+**Standard (v1, v3)**: 
+- Contact line: `h(λ_slip) = λ_slip`, `θ(λ_slip) = θ₀`
+- Far field: `ω(s_max) = 0` or `θ(s_max) = θ_end`
+
+**H-based (v4)**:
+- Contact line: `h(λ_slip) = λ_slip`, `θ(λ_slip) = θ₀` 
+- Target thickness: `θ(h=h_end) = θ_end` (requires iterative domain finding)
 
 ## File Organization
 
 ```
-├── GLE_solver.py, GLE_solver_v2.py    # Python implementations
-├── GLE_solver-GSL.c                   # C main program
-├── huh_scriven_velocity.py            # Velocity field analysis
-├── compare_results.py                 # Cross-validation tool
-├── src-local/                         # C header library
-│   ├── GLE_solver-GSL.h              # Main definitions
-│   ├── gle_physics.h                 # Physical functions
-│   ├── gle_ode_systems.h             # ODE systems
-│   ├── gle_shooting.h                # Numerical algorithms
-│   └── gle_io.h                      # I/O operations
-├── output/                           # Generated results
-└── build/                            # C build artifacts
+├── GLE_solver.py                     # Vertical plate withdrawal
+├── GLE_solver_v3.py                  # Horizontal plate immersion  
+├── GLE_solver_v4.py                  # H-based boundary conditions
+├── GLE_solver-GSL.c                  # C main program
+├── huh_scriven_velocity.py           # Velocity field analysis
+├── compare_results.py                # Cross-validation tool
+├── src-local/                        # C header library
+│   ├── GLE_solver-GSL.h             # Main definitions
+│   ├── gle_physics.h                # Physical functions
+│   ├── gle_ode_systems.h            # ODE systems
+│   ├── gle_shooting.h               # Numerical algorithms
+│   └── gle_io.h                     # I/O operations
+├── output/                          # Generated results
+└── build/                           # C build artifacts
 ```
 
 ## Dependencies
@@ -142,11 +160,24 @@ Where:
 **Python**: numpy, scipy, matplotlib
 **C**: GSL (≥2.5), OpenBLAS, standard C99 compiler
 
+## Solver Selection Guide
+
+**Choose based on physical problem:**
+- **GLE_solver.py**: Vertical coating processes (dip coating, plate withdrawal)
+- **GLE_solver_v3.py**: Horizontal wetting processes (immersion, advancing contact lines)  
+- **GLE_solver_v4.py**: When film thickness `h_end` is the controlled parameter
+- **GLE_solver-GSL.c**: High-performance computations or parameter studies
+
+**Parameter considerations:**
+- Different solvers use different parameter sets (Ca, λ_slip, l_cap)
+- v4 requires careful choice of `h_end` and `s_max_initial` for convergence
+- Gravity terms have opposite signs for vertical vs horizontal geometries
+
 ## Known Issues and Limitations
 
-- **Python solver convergence**: Original `GLE_solver.py` has convergence problems for certain parameter combinations
-- **Integration domain**: Current s_range may need adjustment for different physical regimes  
-- **Parameter sensitivity**: Solutions sensitive to initial guesses in shooting method
+- **Parameter sensitivity**: Solutions sensitive to initial guesses, especially in v4's iterative method
+- **Integration domain**: s_range may need adjustment for different physical regimes  
+- **Convergence**: v4's root-finding may fail if h_end is too large or domain bounds are inappropriate
 - **Validation**: Results need comparison against analytical/experimental benchmarks
 
 ## Common Development Patterns
