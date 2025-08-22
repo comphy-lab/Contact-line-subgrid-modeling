@@ -47,27 +47,20 @@ def f(theta, mu_r):
 def GLE(s, y):
     h, theta, omega = y
     dh_ds = np.sin(theta) # dh/ds = sin(theta)
-    dt_ds = omega # omega = dtheta/ds
-    dw_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) + np.sin(theta)
-    return [dh_ds, dt_ds, dw_ds]
-
-# Set up the solver parameters
-# Need to set the initial conditions for the ODEs. Since we are setting them at different points, we need 3 as fixed, 3 as guesses
-# \Theta at s=0, h at s=0, \Theta at s=\Delta
-# The guesses follow the known BCs when solved
-# The 3rd "known" BC is now theta at s=\Delta = 90 degrees
-
-Delta = 1e-4  # Minimum grid cell size
+    dtheta_ds = omega # omega = dtheta/ds
+    domega_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) + np.sin(theta)/l_cap**2
+    return [dh_ds, dtheta_ds, domega_ds]
 
 # Boundary conditions
 def boundary_conditions(ya, yb):
-    # ya corresponds to s = 0, yb corresponds to s = Delta
-    h_a, theta_a, w_a = ya # boundary conditions at s = 0
-    h_b, theta_b, w_b = yb # boundary conditions at s = Delta
+    # ya corresponds to s = lambda_slip (start of domain)
+    # yb corresponds to s = s_max (end of domain)
+    h_a, theta_a, omega_a = ya 
+    h_b, theta_b, omega_b = yb 
     return [
-        theta_a - theta0,      # theta(0) = theta0 (77 degrees), this forces theta_a to be essentially theta0. We set.
-        h_a - lambda_slip,     # h(0) = lambda_slip, this forces h_a to be essentially lambda_slip. We set.
-        theta_b - theta_end    # theta(Delta) = 90 degrees, this forces theta_b to be 90 degrees at the end
+        h_a - h0,              # h(lambda_slip) = h0 = lambda_slip
+        theta_a - theta0,      # theta(lambda_slip) = theta0
+        theta_b - theta_end    # theta(s_max) = theta_end
     ]
 
 def run_solver_and_plot(GUI=False, output_dir='output'):
@@ -89,18 +82,18 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     os.makedirs(output_dir, exist_ok=True)
 
     # Initial guess for the solution
-    s_range_local = np.linspace(0, 8.8e-2, 100000)  # Define the range of s
+    s_range_local = np.logspace(np.log10(lambda_slip), np.log10(s_max), N_grid)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [h, theta, omega]
-    y_guess_local[0, :] = np.linspace(lambda_slip, 10, s_range_local.size)  # Linear guess for h
-    y_guess_local[1, :] = np.linspace(theta0, theta_end, s_range_local.size)  # Linear interpolation for theta from 77° to 90°
-    y_guess_local[2, :] = 0          # Initial guess for dTheta/ds
+    y_guess_local[0, :] = np.logspace(np.log10(h0), np.log10(s_max), s_range_local.size)  # Logarithmic guess for h from h0 to s_max
+    y_guess_local[1, :] = np.linspace(theta0, theta_end, s_range_local.size)  # Linear interpolation for theta from theta0 to theta_end
+    y_guess_local[2, :] = 0          # Initial guess for omega
 
     # Solve the ODEs
     solution = solve_bvp(GLE, boundary_conditions, s_range_local, y_guess_local, max_nodes=1000000)
 
     # Extract the solution
     s_values_local = solution.x
-    h_values_local, theta_values_local, w_values_local = solution.y
+    h_values_local, theta_values_local, omega_values_local = solution.y
     theta_values_deg = theta_values_local*180/np.pi
 
     x_values_local = np.zeros_like(s_values_local)
@@ -115,55 +108,41 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     # First create the combined plot
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 16))
     
-    # Plot h(s)
-    ax1.plot(s_values_local*3*1e3, h_values_local*3*1e3, '-', 
+    # Plot h(x)
+    ax1.plot(x_values_local, h_values_local, '-',
              color=solver_color, linewidth=2.5)
-    ax1.set_xlabel('s (μm)', fontsize=12)
-    ax1.set_ylabel('h(s) [μm]', fontsize=12)
+    ax1.set_xlabel('$x(s/l^*)$ ', fontsize=12)
+    ax1.set_ylabel('$h(s/l^*)$ ', fontsize=12)
     ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
-    # ax1.set_xlim(0, 10)
-    ax1.set_ylim(0, 250)  # Updated to accommodate the range of h(s)
+    ax1.set_xlim(0, np.max(x_values_local))
+    ax1.set_ylim(0, np.max(h_values_local))
 
-    txt_path = 'Ca0,00972.txt'
-    if os.path.exists(txt_path):
-        txt_data = np.loadtxt(txt_path, skiprows=1)
-        s_txt = txt_data[:, 2]  # s [um]
-        y_txt = txt_data[:, 1]  # y [um]
-        ax1.plot(s_txt, y_txt, 'o', color='green', markersize=3)
-    
     # Add text box with parameters
-    textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip*3*1e-3:.0e}\nμ_r = {mu_r:.0e}'
+    textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
     ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
              verticalalignment='top', bbox=props)
-    
+
     # Plot theta(s)
-    ax2.plot(s_values_local*3*1e3, theta_values_deg, '-', 
+    ax2.plot(s_values_local, theta_values_deg, '.',
              color=solver_color, linewidth=2.5)
-    ax2.set_xlabel('s (μm)', fontsize=12)
-    ax2.set_ylabel('θ(s) [degrees]', fontsize=12)
+    ax2.set_xlabel('$s/l^*$', fontsize=12)
+    ax2.set_ylabel('$\\theta(s/l^*)$ [degrees]', fontsize=12)
     ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(0, 250)
-    ax2.set_ylim(55, 90)  # Updated to accommodate 90 degrees
+    ax2.set_xlim(lambda_slip, s_max)
+    ax2.set_ylim(np.min(theta_values_deg), np.max(theta_values_deg))
+    # log-log for ax2
+    ax2.set_xscale('log')
+    ax2.set_yscale('log')
 
-    txt_path = 'Ca0,00972.txt'
-    if os.path.exists(txt_path):
-        # Load data, skip header row
-        txt_data = np.loadtxt(txt_path, skiprows=1)
-        s_txt = txt_data[:, 2]  # s [um]
-        theta_txt = txt_data[:, 3]  # theta [deg]
-        ax2.plot(s_txt, theta_txt, 'o', color='red', markersize=3)
-        ax2.legend()
-    
-    # Add boundary condition text
-    bc_text = f'θ(0) = {theta0*180/np.pi:.0f}°'
-    ax2.text(0.02, 0.05, bc_text, transform=ax2.transAxes, fontsize=10,
+    # Add initial condition text
+    ax2.text(0.02, 0.05, f'θ(0) = {theta0*180/np.pi:.0f}°', transform=ax2.transAxes, fontsize=10,
              bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
-    
+
     plt.tight_layout()
-    
+
     if GUI:
         plt.show()
     else:
@@ -176,7 +155,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     np.savetxt(csv_path, csv_data, delimiter=',', header='s,h,theta', comments='')
     print(f"Data saved to: {csv_path}")
 
-    return solution, s_values_local, h_values_local, theta_values_local, w_values_local
+    return solution, s_values_local, h_values_local, theta_values_local, omega_values_local
 
 # Main execution
 if __name__ == "__main__":

@@ -157,7 +157,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     # First create the combined plot
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
-    # Plot h(s)
+    # Plot h(x)
     ax1.plot(x_values_local, h_values_local, '-',
              color=solver_color, linewidth=2.5)
     ax1.set_xlabel('$x(s/l^*)$ ', fontsize=12)
