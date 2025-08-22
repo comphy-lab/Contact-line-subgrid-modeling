@@ -1,3 +1,46 @@
+"""
+Generalized Lubrication Equations (GLE) Solver for Horizontal Plate Immersion Problem
+
+This code solves the GLE system for a horizontal plate being immersed into (or withdrawn from) 
+a liquid bath. The horizontal plate geometry is why the gravitational term appears as +sin(θ) 
+in the momentum equation (line 51) - gravity acts vertically while θ is measured from horizontal.
+
+PHYSICAL PROBLEM:
+- A horizontal plate is immersed into a liquid bath at constant velocity (advancing contact line)
+- A thin liquid film forms on the plate surface as it advances into the liquid
+- Near the contact line, molecular-scale physics becomes important
+- The GLE system captures the transition from molecular to continuum scales
+
+ODE SYSTEM (3 coupled equations):
+  dh/ds = sin(θ)                                               [Kinematic condition]
+  dθ/ds = ω                                                    [Geometric relation]  
+  dω/ds = 3*Ca*f(θ,μᵣ)/(h*(h+3*λ)) + sin(θ)/l_cap²          [Momentum balance + gravity]
+
+Where:
+- s: arc length coordinate along the interface (integration variable)
+- h(s): film thickness profile
+- θ(s): interface angle with respect to the horizontal substrate
+- ω(s): interface curvature (dθ/ds)
+- Ca: Capillary number (viscous/surface tension forces ratio)
+- λ: slip length (molecular scale parameter)
+- μᵣ: viscosity ratio (gas/liquid)
+- f(θ,μᵣ): viscous dissipation function from wedge flow analysis
+- l_cap: capillary length
+
+BOUNDARY CONDITIONS:
+- At s = λ_slip (contact line): h(λ_slip) = λ_slip, θ(λ_slip) = θ₀
+- At s = s_max (far field): θ(s_max) = 90° (interface becomes vertical)
+
+INTEGRATION DOMAIN:
+- Integration proceeds from s = λ_slip to s = s_max
+- This avoids the contact line singularity at s = 0
+- The slip length λ_slip provides the molecular cutoff scale
+
+KEY DIFFERENCES FROM VERTICAL PLATE:
+- Gravity term: +sin(θ) instead of -cos(θ) due to horizontal geometry
+- Far-field BC: θ(s_max) = 90° instead of ω(s_max) = 0 (vertical interface at far field)
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
@@ -5,9 +48,9 @@ import os
 import sys
 from functools import partial
 
-#Parameters
+# Parameters for horizontal plate immersion
 Ca = 0.00972  # Capillary number
-mu_r = 1e-3 # \mu_g/\mu_l
+mu_r = 1e-3 # \mu_g/\mu_l (viscosity ratio: gas/liquid)
 
 # Length scales for normalization
 # NOTE: This implementation uses slip length normalization (lambda_slip = 1)
@@ -16,15 +59,15 @@ mu_r = 1e-3 # \mu_g/\mu_l
 # - l_cap is the dimensionless capillary length = l_cap_dimensional/lambda_slip_dimensional
 # Alternatively, capillary length normalization can be used by setting l_cap = 1
 lambda_slip = 1e0  # Slip length (= 1 for normalization by slip length)
-l_cap = 1e6 # Dimensionless capillary length (l_cap_dim/lambda_slip_dim)
+l_cap = 1e6 # Dimensionless capillary length (l_cap_dim/lambda_slip_dim) - controls gravity effects in horizontal plate
 s_max = l_cap # maximum s/l* -> for receeding cases, to capture the dip, we need to go beyond the capillary length
 
 N_grid = min(1000000, int(s_max/lambda_slip)) # Number of grid points (s_max/lambda_slip in dimensionless units)
 
-# Initial conditions  
+# Initial conditions for horizontal plate immersion
 h0 = lambda_slip  # h at s = lambda_slip (film thickness at start of domain)
-theta0 = 72*np.pi/180  # theta at s = 0
-theta_end = 90*np.pi/180  # theta at s = Delta (90 degrees)
+theta0 = 72*np.pi/180  # theta at s = lambda_slip (contact angle at start of domain, measured from horizontal)
+theta_end = 90*np.pi/180  # theta at s = s_max (interface becomes vertical at far field for horizontal plate)
 
 # Define f1, f2, and f3 functions
 def f1(theta):
@@ -43,15 +86,21 @@ def f(theta, mu_r):
     return numerator / denominator
 
 
-# Define the coupled ODEs system
+# Define the coupled ODEs system with state: y = [h, theta, omega]
 def GLE(s, y):
     h, theta, omega = y
-    dh_ds = np.sin(theta) # dh/ds = sin(theta)
-    dtheta_ds = omega # omega = dtheta/ds
-    domega_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) + np.sin(theta)/l_cap**2
+    dh_ds = np.sin(theta)                                                    # Kinematic condition
+    dtheta_ds = omega                                                        # Geometric relation
+    domega_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) + np.sin(theta)/l_cap**2  # Momentum balance + horizontal gravity term
     return [dh_ds, dtheta_ds, domega_ds]
 
-# Boundary conditions
+# Set up the solver parameters
+# Boundary value problem with 3 boundary conditions (all fixed):
+# 1. h(s=lambda_slip) = h0 = lambda_slip  [film thickness at contact line]
+# 2. theta(s=lambda_slip) = theta0        [contact angle at contact line, measured from horizontal]  
+# 3. theta(s=s_max) = theta_end = 90°     [interface becomes vertical at far field for horizontal plate]
+# The solver iteratively adjusts the solution to satisfy all three BCs simultaneously
+
 def boundary_conditions(ya, yb):
     # ya corresponds to s = lambda_slip (start of domain)
     # yb corresponds to s = s_max (end of domain)
@@ -59,12 +108,12 @@ def boundary_conditions(ya, yb):
     h_b, theta_b, omega_b = yb 
     return [
         h_a - h0,              # h(lambda_slip) = h0 = lambda_slip
-        theta_a - theta0,      # theta(lambda_slip) = theta0
-        theta_b - theta_end    # theta(s_max) = theta_end
+        theta_a - theta0,      # theta(lambda_slip) = theta0 (contact angle at start)
+        theta_b - theta_end    # theta(s_max) = 90° (vertical interface at far field)
     ]
 
 def run_solver_and_plot(GUI=False, output_dir='output'):
-    """Run the solver and either display or save plots
+    """Run the GLE solver for horizontal plate immersion and either display or save plots
 
     Args:
         GUI (bool): If True, display plots. If False, save to files.
@@ -85,7 +134,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     s_range_local = np.logspace(np.log10(lambda_slip), np.log10(s_max), N_grid)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [h, theta, omega]
     y_guess_local[0, :] = np.logspace(np.log10(h0), np.log10(s_max), s_range_local.size)  # Logarithmic guess for h from h0 to s_max
-    y_guess_local[1, :] = np.linspace(theta0, theta_end, s_range_local.size)  # Linear interpolation for theta from theta0 to theta_end
+    y_guess_local[1, :] = np.linspace(theta0, theta_end, s_range_local.size)  # Linear interpolation for theta: 72° → 90° (horizontal → vertical)
     y_guess_local[2, :] = 0          # Initial guess for omega
 
     # Solve the ODEs
@@ -96,6 +145,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     h_values_local, theta_values_local, omega_values_local = solution.y
     theta_values_deg = theta_values_local*180/np.pi
 
+    # Convert s to x. dx = cos(theta) ds (horizontal coordinate along plate)
     x_values_local = np.zeros_like(s_values_local)
     x_values_local[1:] = np.cumsum(np.diff(s_values_local) * np.cos(theta_values_local[:-1]))
 
@@ -113,7 +163,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
              color=solver_color, linewidth=2.5)
     ax1.set_xlabel('$x(s/l^*)$ ', fontsize=12)
     ax1.set_ylabel('$h(s/l^*)$ ', fontsize=12)
-    ax1.set_title('Film Thickness Profile', fontsize=14, fontweight='bold')
+    ax1.set_title('Film Thickness Profile (Horizontal Plate)', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     ax1.set_xlim(0, np.max(x_values_local))
     ax1.set_ylim(0, np.max(h_values_local))
@@ -129,7 +179,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
              color=solver_color, linewidth=2.5)
     ax2.set_xlabel('$s/l^*$', fontsize=12)
     ax2.set_ylabel('$\\theta(s/l^*)$ [degrees]', fontsize=12)
-    ax2.set_title('Contact Angle Profile', fontsize=14, fontweight='bold')
+    ax2.set_title('Contact Angle Profile (Horizontal Plate)', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
     ax2.set_xlim(lambda_slip, s_max)
     ax2.set_ylim(np.min(theta_values_deg), np.max(theta_values_deg))
