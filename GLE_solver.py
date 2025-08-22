@@ -46,9 +46,9 @@ def f(theta, mu_r):
 # Define the coupled ODEs system with state: y = [h, theta, omega]
 def GLE(s, y):
     h, theta, omega = y
-    dh_ds = np.sin(theta)
-    dtheta_ds = omega
-    domega_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)/l_cap**2
+    dh_ds = np.sin(theta)                                                    # Kinematic condition
+    dtheta_ds = omega                                                        # Geometric relation
+    domega_ds = 3 * Ca * f(theta, mu_r) / (h * (h + 3 * lambda_slip)) - np.cos(theta)/l_cap**2  # Momentum balance + gravity (vertical plate)
     return [dh_ds, dtheta_ds, domega_ds]
 
 # Set up the solver parameters
