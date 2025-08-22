@@ -6,22 +6,25 @@ import sys
 from functools import partial
 
 #Parameters
-Ca = 0.0132  # Capillary number
+Ca = 0.005  # Capillary number
 mu_r = 1e-3 # \mu_g/\mu_l
-s_max = 1e6 # maximum s/l*
 
 # Length scales for normalization
-# NOTE: The normalization length scale is determined by which of lambda_slip or l_cap equals 1
-# - If lambda_slip = 1, then all lengths are normalized by the slip length
-# - If l_cap = 1, then all lengths are normalized by the capillary length
-lambda_slip = 1e0  # Slip length (normalization length scale when = 1)
-l_cap = 1e6 # Capillary length (normalization length scale when = 1)
-N_grid = min(1000000, int(s_max/lambda_slip)) # Number of grid points
+# NOTE: This implementation uses slip length normalization (lambda_slip = 1)
+# All dimensional lengths are normalized by the slip length:
+# - h, s are in units of lambda_slip  
+# - l_cap is the dimensionless capillary length = l_cap_dimensional/lambda_slip_dimensional
+# Alternatively, capillary length normalization can be used by setting l_cap = 1
+lambda_slip = 1e0  # Slip length (= 1 for normalization by slip length)
+l_cap = 1e6 # Dimensionless capillary length (l_cap_dim/lambda_slip_dim)
+s_max = l_cap # maximum s/l* -> for receeding cases, to capture the dip, we need to go beyond the capillary length
 
-# Initial conditions
-h0 = lambda_slip  # h at s = 0
-theta0 = np.pi/2  # theta at s = 0
-omega_at_smax = 0  # omega at s = s_max, for now, we set it to 0
+N_grid = min(1000000, int(s_max/lambda_slip)) # Number of grid points (s_max/lambda_slip in dimensionless units)
+
+# Initial conditions  
+h0 = lambda_slip  # h at s = lambda_slip (film thickness at start of domain)
+theta0 = np.pi/3  # theta at s = lambda_slip (contact angle at start of domain)
+omega_at_smax = 0  # omega at s = s_max (curvature at far field, typically 0 for flat far-field)
 
 
 # Define f1, f2, and f3 functions
@@ -49,10 +52,11 @@ def GLE(s, y):
     return [dh_ds, dtheta_ds, domega_ds]
 
 # Set up the solver parameters
-# Need to set the initial conditions for the ODEs. Since we are setting them at different points, we need 3 as fixed, 3 as guesses
-# \Theta at s=0, h at s=0, omega at s=s_max
-# The guesses follow the known BCs when solved
-# The 3rd "known" BC is the curvature at s=s_max, which is not known, but can be fed back from the DNS
+# Boundary value problem with 3 boundary conditions (all fixed):
+# 1. h(s=lambda_slip) = h0 = lambda_slip  [film thickness at contact line]
+# 2. theta(s=lambda_slip) = theta0        [contact angle at contact line]  
+# 3. omega(s=s_max) = omega_at_smax       [curvature at far field, typically 0]
+# The solver iteratively adjusts the solution to satisfy all three BCs simultaneously
 
 def boundary_conditions(ya, yb, omega_bc):
     # ya corresponds to s = lambda_slip (start of domain)
@@ -86,7 +90,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     # Initial guess for the solution
     s_range_local = np.logspace(np.log10(lambda_slip), np.log10(s_max), N_grid)  # Define the range of s
     y_guess_local = np.zeros((3, s_range_local.size))  # Initial guess for [theta, w, h]
-    y_guess_local[0, :] = np.logspace(np.log10(h0), np.log10(s_max), s_range_local.size)  # Linear guess for h
+    y_guess_local[0, :] = np.logspace(np.log10(h0), np.log10(s_max), s_range_local.size)  # Logarithmic guess for h from h0 to s_max
     y_guess_local[1, :] = theta0  # Initial guess for theta
     y_guess_local[2, :] = 0          # Initial guess for omega
 
