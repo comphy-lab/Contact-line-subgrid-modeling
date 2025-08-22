@@ -170,7 +170,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == '--gui':
         gui_mode = True
 
-    solution, s_values_final, h_values_final, theta_values_final, w_values_final = run_solver_and_plot(GUI=gui_mode)
+    solution, s_values_final, h_values_final, theta_values_final, omega_values_final = run_solver_and_plot(GUI=gui_mode)
 
     print(f"Solution converged: {solution.success}")
     print(f"Number of iterations: {solution.niter}")
