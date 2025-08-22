@@ -166,7 +166,7 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     ax1.set_title('Film Thickness Profile (Horizontal Plate)', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     ax1.set_xlim(0, np.max(x_values_local))
-    ax1.set_ylim(0, np.max(h_values_local))
+    ax1.set_ylim(np.min(h_values_local), np.max(h_values_local))
 
     # Add text box with parameters
     textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}'

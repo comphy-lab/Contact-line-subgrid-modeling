@@ -61,11 +61,11 @@ mu_r = 1e-3   # \mu_g/\mu_l (viscosity ratio: gas/liquid)
 # - h, s are in units of lambda_slip  
 # - l_cap is the dimensionless capillary length = l_cap_dimensional/lambda_slip_dimensional
 # Alternatively, capillary length normalization can be used by setting l_cap = 1
-lambda_slip = 1e0  # Slip length (= 1 for normalization by slip length)
-l_cap = 1e6 # Dimensionless capillary length (l_cap_dim/lambda_slip_dim) - controls gravity effects in horizontal plate
+lambda_slip = 1e-6  # Slip length (= 1 for normalization by slip length)
+l_cap = 1e0 # Dimensionless capillary length (l_cap_dim/lambda_slip_dim) - controls gravity effects in horizontal plate
 
 # NEW: h-based boundary condition parameters
-h_end = 10.0  # Target film thickness where boundary condition is applied
+h_end = 1e-1  # Target film thickness where boundary condition is applied
 theta_end = 90*np.pi/180  # Angle at h = h_end (default: interface becomes vertical)
 s_max_initial = l_cap  # Initial guess for integration domain
 
@@ -264,10 +264,10 @@ def run_solver_and_plot(GUI=False, output_dir='output'):
     ax1.set_title('Film Thickness Profile (h-based BC)', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     ax1.set_xlim(0, np.max(x_values_local))
-    ax1.set_ylim(0, np.max(h_values_local))
+    ax1.set_ylim(np.min(h_values_local), np.max(h_values_local))
 
     # Add text box with parameters
-    textstr = f'Ca = {Ca}\\nλ_slip = {lambda_slip:.0e}\\nμ_r = {mu_r:.0e}\\nh_end = {h_end:.1f}'
+    textstr = f'Ca = {Ca}\nλ_slip = {lambda_slip:.0e}\nμ_r = {mu_r:.0e}\nh_end = {h_end:.1f}'
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
     ax1.text(0.02, 0.95, textstr, transform=ax1.transAxes, fontsize=10,
              verticalalignment='top', bbox=props)
