@@ -44,9 +44,9 @@ import os
 import sys
 from functools import partial
 
-#Parameters
+# Parameters for vertical plate withdrawal
 Ca = 0.005  # Capillary number
-mu_r = 1e-3 # \mu_g/\mu_l
+mu_r = 1e-3 # \mu_g/\mu_l (viscosity ratio: gas/liquid)
 
 # Length scales for normalization
 # NOTE: This implementation uses slip length normalization (lambda_slip = 1)
@@ -109,7 +109,7 @@ def boundary_conditions(ya, yb, omega_bc):
     ]
 
 def run_solver_and_plot(GUI=False, output_dir='output'):
-    """Run the solver and either display or save plots
+    """Run the GLE solver for vertical plate withdrawal and either display or save plots
 
     Args:
         GUI (bool): If True, display plots. If False, save to files.
