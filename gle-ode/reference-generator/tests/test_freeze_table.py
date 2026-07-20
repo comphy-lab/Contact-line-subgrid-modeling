@@ -99,7 +99,54 @@ def write_manifest(path, _theta=None, **overrides):
     )
 
 
+def write_audit(path, **overrides):
+    audit_row = {
+        "theta_deg": "31.25",
+        "log10_viscosity_ratio": "-1.9375",
+        "Q_reference": "-0.65428562255609424",
+        "Q_interpolated": "-0.65428218746271694",
+        "absolute_error_Q": "3.4350933773019676e-06",
+        "reference_estimated_error_Q": "0.0002073832260247599",
+        "absolute_weighted_node_sensitivity_Q": "0.0004831234638094653",
+        "checkpoint_error_budget_Q": "0.0006939417832115271",
+        "table_cell_theta_index": "0",
+        "table_cell_log10_M_index": "0",
+        "reference_converged": "True",
+    }
+    audit_row.update(overrides)
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=FREEZE.AUDIT_COLUMNS)
+        writer.writeheader()
+        writer.writerow(audit_row)
+
+
 class FreezeTableTests(unittest.TestCase):
+    def test_compare_audit_accepts_roundoff_but_rejects_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            reference = work / "reference.csv"
+            candidate = work / "candidate.csv"
+            write_audit(reference)
+            write_audit(
+                candidate,
+                Q_interpolated="-0.65428218746271683",
+                checkpoint_error_budget_Q="0.0006939417832116381",
+            )
+            arguments = Namespace(
+                reference=str(reference),
+                candidate=str(candidate),
+                tolerance=1.0e-13,
+            )
+            self.assertEqual(FREEZE.compare_audit_command(arguments), 0)
+
+            write_audit(candidate, Q_interpolated="-0.6542821874625")
+            with self.assertRaisesRegex(ValueError, "exceeding"):
+                FREEZE.compare_audit_command(arguments)
+
+            write_audit(candidate, table_cell_theta_index="1")
+            with self.assertRaisesRegex(ValueError, "differs exactly"):
+                FREEZE.compare_audit_command(arguments)
+
     def test_merge_check_symmetry_and_emit(self):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)

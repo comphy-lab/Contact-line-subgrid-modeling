@@ -39,6 +39,27 @@ REQUIRED_COLUMNS = {
 THETA_STENCIL_NODES = 4
 LOG10_M_STENCIL_NODES = 5
 
+AUDIT_COLUMNS = [
+    "theta_deg",
+    "log10_viscosity_ratio",
+    "Q_reference",
+    "Q_interpolated",
+    "absolute_error_Q",
+    "reference_estimated_error_Q",
+    "absolute_weighted_node_sensitivity_Q",
+    "checkpoint_error_budget_Q",
+    "table_cell_theta_index",
+    "table_cell_log10_M_index",
+    "reference_converged",
+]
+
+AUDIT_COMPUTED_COLUMNS = {
+    "Q_interpolated",
+    "absolute_error_Q",
+    "absolute_weighted_node_sensitivity_Q",
+    "checkpoint_error_budget_Q",
+}
+
 
 def _interpolation_metadata() -> Dict[str, object]:
     """Return metadata derived from the stencil used by the audit."""
@@ -133,6 +154,76 @@ def _read_csv(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
         ):
             raise ValueError(f"{path}: invalid generator source SHA-256")
     return fields, rows
+
+
+def _read_audit_csv(path: Path) -> List[Dict[str, str]]:
+    with path.open(newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        fields = list(reader.fieldnames or [])
+        if fields != AUDIT_COLUMNS:
+            raise ValueError(
+                f"{path}: audit columns differ from the reference schema"
+            )
+        rows = list(reader)
+    if not rows:
+        raise ValueError(f"{path}: empty interpolation audit")
+    return rows
+
+
+def compare_audit_command(args: argparse.Namespace) -> int:
+    """Compare recomputed audit values without demanding identical libm bits."""
+
+    tolerance = float(args.tolerance)
+    if not math.isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("audit tolerance must be a finite non-negative number")
+    reference_path = Path(args.reference)
+    candidate_path = Path(args.candidate)
+    reference_rows = _read_audit_csv(reference_path)
+    candidate_rows = _read_audit_csv(candidate_path)
+    if len(reference_rows) != len(candidate_rows):
+        raise ValueError(
+            "interpolation audits have different row counts: "
+            f"{len(reference_rows)} != {len(candidate_rows)}"
+        )
+
+    max_difference = 0.0
+    max_location = ""
+    exact_columns = set(AUDIT_COLUMNS).difference(AUDIT_COMPUTED_COLUMNS)
+    for row_index, (reference, candidate) in enumerate(
+        zip(reference_rows, candidate_rows), start=2
+    ):
+        for key in exact_columns:
+            if reference[key] != candidate[key]:
+                raise ValueError(
+                    f"audit row {row_index} differs exactly in {key}: "
+                    f"{reference[key]!r} != {candidate[key]!r}"
+                )
+        for key in AUDIT_COMPUTED_COLUMNS:
+            reference_value = float(reference[key])
+            candidate_value = float(candidate[key])
+            if not (
+                math.isfinite(reference_value)
+                and math.isfinite(candidate_value)
+            ):
+                raise ValueError(
+                    f"audit row {row_index} has a non-finite {key}"
+                )
+            difference = abs(reference_value - candidate_value)
+            if difference > max_difference:
+                max_difference = difference
+                max_location = f"row {row_index}, {key}"
+            if difference > tolerance:
+                raise ValueError(
+                    f"audit row {row_index} differs in {key} by "
+                    f"{difference:.17g}, exceeding {tolerance:.17g}"
+                )
+
+    location = f" at {max_location}" if max_location else ""
+    print(
+        f"interpolation audits agree within {tolerance:.17g}; "
+        f"max |delta| = {max_difference:.17g}{location}"
+    )
+    return 0
 
 
 def _read_manifest(path: Path) -> Dict[str, object]:
@@ -891,6 +982,15 @@ def _build_parser() -> argparse.ArgumentParser:
     check.add_argument("--tolerance-right-angle-Q", type=float, default=1.0e-3)
     check.add_argument("--tolerance-symmetry-Q", type=float, default=1.0e-3)
     check.set_defaults(function=check_command)
+
+    compare_audit = subparsers.add_parser(
+        "compare-audit",
+        help="compare recomputed audit floats with a strict absolute tolerance",
+    )
+    compare_audit.add_argument("--reference", required=True)
+    compare_audit.add_argument("--candidate", required=True)
+    compare_audit.add_argument("--tolerance", type=float, default=1.0e-13)
+    compare_audit.set_defaults(function=compare_audit_command)
 
     emit = subparsers.add_parser("emit-c", help="emit dependency-free C data")
     emit.add_argument("--table", required=True)
