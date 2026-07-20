@@ -62,6 +62,59 @@ double lambda_slip, theta_mic;
 int MAXlevel;
 
 /**
+The subgrid equation and Chan cutoff policy are compile-time case choices.
+For example, compile the direct alternative with
+
+~~~c
+qcc ... -DGLE_RUNTIME_MODEL=GLE_MODEL_LUO_GAO contactline-gle.c ...
+~~~
+
+The case is prepared once because $c(\theta_e,M)$ is fixed by the microscopic
+inputs, not by the instantaneous interface profile. Only the relative
+capillary number changes in the per-timestep copy.
+*/
+#ifndef GLE_RUNTIME_MODEL
+# define GLE_RUNTIME_MODEL GLE_MODEL_CHAN
+#endif
+#ifndef GLE_RUNTIME_CUTOFF
+# define GLE_RUNTIME_CUTOFF GLE_CUTOFF_AUTO
+#endif
+
+static GLEParams gle_case_params;
+static GLECutoffResult gle_case_cutoff;
+
+static void gle_prepare_case_model (void) {
+  gle_case_params = gle_default_params ();
+  gle_case_params.model = GLE_RUNTIME_MODEL;
+  gle_case_params.cutoff_method = GLE_RUNTIME_CUTOFF;
+  gle_case_params.mu_r = mu_r;
+  gle_case_params.slip = lambda_slip;
+  gle_case_params.theta_mic = theta_mic;
+  gle_case_params.grav = 0.0;
+  gle_case_params.smax_cap = 10.0*Ldomain;
+  int status = gle_model_prepare (&gle_case_params, &gle_case_cutoff);
+  if (status != GLE_CUTOFF_OK) {
+    if (pid() == 0)
+      fprintf (ferr,
+	       "error: cannot prepare GLE model=%s cutoff=%s: %s\n",
+	       gle_model_name (gle_case_params.model),
+	       gle_cutoff_method_name (gle_case_params.cutoff_method),
+	       gle_cutoff_status_name (status));
+    exit (2);
+  }
+  if (pid() == 0) {
+    fprintf (ferr, "GLE model=%s", gle_model_name (gle_case_params.model));
+    if (gle_case_params.model == GLE_MODEL_CHAN)
+      fprintf (ferr,
+	       ", cutoff=%s, c=%g, Q=%g, luo_gao_approximation=%s",
+	       gle_cutoff_method_name (gle_case_cutoff.method),
+	       gle_case_params.c_slip, gle_case_cutoff.Q,
+	       gle_case_cutoff.luo_gao_approximation ? "yes" : "no");
+    fprintf (ferr, "\n");
+  }
+}
+
+/**
 ## Boundary conditions
 
 The plate is the bottom boundary, moving tangentially with speed `Ca`. The
@@ -159,6 +212,7 @@ int main() {
   Ldomain = lr > 1 ? 32 : 32*lr;
   hf = 0.5*Ldomain;
   lambda_slip = 1e-3*Ldomain/(1 << MAXlevel);   /* lambda << Delta */
+  gle_prepare_case_model ();
 
   fprintf(ferr, "Level %d tmax %g, hf %3.2f, lambda %g\n",
 	  MAXlevel, tmax, hf, lambda_slip);
@@ -267,14 +321,8 @@ event gle_boundary (i++) {
     gle_previous_t = t;
     gle_have_previous = true;
 
-    GLEParams gp = gle_default_params ();
+    GLEParams gp = gle_case_params;
     gp.Ca = Ca_local;              /* plate speed minus line speed */
-    gp.mu_r = mu_r;                /* DNS gas/liquid viscosity ratio */
-    gp.slip = lambda_slip;
-    gp.c_slip = gle_slip_prefactor_right_angle (mu_r);
-    gp.theta_mic = theta_mic;
-    gp.grav = 0.0;                 /* negligible below the grid scale */
-    gp.smax_cap = 10.0*Ldomain;
     /* Here h = y and the GLE arclength points from the contact line toward
        the bath, opposite to Basilisk's normal orientation for `f = -x`.
        Consequently omega_GLE = -kappa_Basilisk for this geometry. */

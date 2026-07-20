@@ -46,6 +46,8 @@ Last updated: Jul 20, 2026
 
 int main (int argc, char *argv[]) {
   GLEParams p = gle_default_params ();
+  GLECutoffResult cutoff;
+  gle_cutoff_result_reset (&cutoff, p.cutoff_method, GLE_CUTOFF_UNAVAILABLE);
   GLEContOpts opts = gle_default_cont_opts ();
   const char *out_path = "gle-branch.csv";
   int mesh_N = 2500;
@@ -101,6 +103,8 @@ int main (int argc, char *argv[]) {
   if (gle_params_validate (&p, "gle-continuation") ||
       gle_cont_opts_validate (&opts, "gle-continuation"))
     driver_bad = 1;
+  if (!driver_bad && gle_params_prepare (&p, &cutoff, "gle-continuation"))
+    driver_bad = 1;
   if (p.geometry != GLE_PLATE_VERTICAL ||
       p.outer_bc != GLE_OUTER_STATIC_MENISCUS) {
     fprintf (stderr, "gle-continuation: collocation requires geometry=vertical "
@@ -115,10 +119,19 @@ int main (int argc, char *argv[]) {
     return 2;
 
   fprintf (stderr,
-	   "gle-continuation: theta_e = %g deg, slip = %.3e, mu_r = %g, "
-	   "c_slip = %g, H_match = %g, mesh_N = %d\n",
-	   p.theta_mic*180.0/M_PI, p.slip, p.mu_r, p.c_slip,
+	   "gle-continuation: model = %s, theta_e = %g deg, slip = %.3e, "
+	   "mu_r = %g, H_match = %g, mesh_N = %d\n",
+	   gle_model_name (p.model), p.theta_mic*180.0/M_PI, p.slip, p.mu_r,
 	   p.H_match, mesh_N);
+  if (p.model == GLE_MODEL_CHAN)
+    fprintf (stderr,
+	     "gle-continuation: c_method = %s -> %s, c_slip = %.10g, "
+	     "Q = %.10g, luo_gao_approximation = %s\n",
+	     gle_cutoff_method_name (p.cutoff_method),
+	     gle_cutoff_method_name (cutoff.method), p.c_slip, cutoff.Q,
+	     cutoff.luo_gao_approximation ? "yes" : "no");
+  else
+    fprintf (stderr, "gle-continuation: Chan cutoff = not_used\n");
 
   /* --- seed: shooting solve on the quasi-static lower branch --- */
   GLESolution sol;
@@ -161,6 +174,17 @@ int main (int argc, char *argv[]) {
     return 1;
   }
 
+  printf ("gle_model     = %s\n", gle_model_name (p.model));
+  printf ("c_method      = %s\n",
+	  cutoff.status == GLE_CUTOFF_NOT_USED ? "not_used" :
+	  gle_cutoff_method_name (cutoff.method));
+  printf ("c_status      = %s\n", gle_cutoff_status_name (cutoff.status));
+  if (p.model == GLE_MODEL_CHAN) {
+    printf ("c_luo_gao_approximation = %s\n",
+	    cutoff.luo_gao_approximation ? "yes" : "no");
+    printf ("c_slip        = %.10g\n", p.c_slip);
+    printf ("Q             = %.10g\n", cutoff.Q);
+  }
   printf ("points        = %d\n", n);
   printf ("fold_Ca       = %.10e\n", fold_Ca);
   printf ("fold_Delta    = %.10e\n", fold_Delta);

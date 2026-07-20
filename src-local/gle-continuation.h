@@ -161,13 +161,20 @@ The fold is located from the sign change of the $\mathrm{Ca}$-secant and
 refined by quadratic interpolation of $\mathrm{Ca}(\Delta)$ through the three
 neighbouring points; written to `fold_Ca` / `fold_Delta` when non-`NULL`.
 
+The public entry point resolves the model once on a local parameter copy. All
+shooting correctors then use prepared-only kernels, so an automatic Chan
+cutoff cannot retain a stale `c_slip` and is not re-interpolated per point.
+
 #### Returns
 The number of branch points computed (≥ 1 on any success; 0 = total
 failure).
 */
-static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
-				    GLEBranchPoint *branch, FILE *csv,
-				    double *fold_Ca, double *fold_Delta) {
+/* Prepared-only kernel; use gle_continuation() at an API boundary. */
+static inline int gle_continuation_prepared (GLEParams *p,
+					     const GLEContOpts *opts,
+					     GLEBranchPoint *branch, FILE *csv,
+					     double *fold_Ca,
+					     double *fold_Delta) {
   if (opts->max_points < 2)
     return 0;                 /* branch[] has no room for the two natural-
 				  continuation seed points pushed below;
@@ -182,7 +189,7 @@ static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
   /* --- point 0: natural solve at Ca_start --- */
   p->Ca = opts->Ca_start;
   double w_guess = gle_static_curvature (p->theta_mic, p->grav);
-  if (gle_shoot (p, w_guess, &sol)) {
+  if (gle_shoot_prepared (p, w_guess, &sol)) {
     if (opts->verbose)
       fprintf (stderr, "gle_continuation: failed at Ca_start = %g\n",
 	       opts->Ca_start);
@@ -209,7 +216,7 @@ static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
 
   /* --- point 1: natural solve at 2 Ca_start --- */
   p->Ca = 2.0*opts->Ca_start;
-  if (gle_shoot (p, sol.omega0, &sol)) {
+  if (gle_shoot_prepared (p, sol.omega0, &sol)) {
     if (opts->verbose)
       fprintf (stderr, "gle_continuation: failed at second point\n");
     return n;
@@ -242,7 +249,7 @@ static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
       if (rel_ca >= rel_w && Ca_pred > 0.0) {
 	/* freeze Ca, solve omega0 (regular away from the fold) */
 	p->Ca = Ca_pred;
-	fail = gle_shoot (p, w_pred, &sol);
+	fail = gle_shoot_prepared (p, w_pred, &sol);
 	w_new = sol.omega0;
 	Ca_new = Ca_pred;
 	/* branch-jump guard: near the fold two omega0 roots coexist at the
@@ -256,9 +263,8 @@ static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
       }
       else {
 	/* freeze omega0, solve Ca (regular at and beyond the fold) */
-	fail = gle_solve_ca (p, w_pred,
-			     (Ca_pred > 0.0 ? Ca_pred : branch[n-1].Ca),
-			     &sol);
+	fail = gle_solve_ca_prepared (
+	  p, w_pred, (Ca_pred > 0.0 ? Ca_pred : branch[n-1].Ca), &sol);
 	w_new = w_pred;
 	Ca_new = p->Ca;
       }
@@ -361,6 +367,21 @@ static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
       break;
   }
 #undef GLE_PUSH_POINT
+  return n;
+}
+
+static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
+				    GLEBranchPoint *branch, FILE *csv,
+				    double *fold_Ca, double *fold_Delta) {
+  if (!p || !opts || !branch)
+    return 0;
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK)
+    return 0;
+  int n = gle_continuation_prepared (&prepared, opts, branch, csv,
+					     fold_Ca, fold_Delta);
+  p->Ca = prepared.Ca;
   return n;
 }
 

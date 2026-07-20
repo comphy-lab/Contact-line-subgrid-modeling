@@ -89,6 +89,9 @@ parameters, filling `out` (may be `NULL`) with trajectory observables. The
 `sampler` observer, when non-`NULL`, sees every accepted integration step —
 used by the drivers to dump interface profiles.
 
+The public entry point resolves the selected model on one local parameter
+copy. The shooting iterations call the prepared implementation directly.
+
 Penalty values ($\pm 10^{3}$) are returned when the trajectory leaves the
 domain or exhausts its budget before reaching $H_{\mathrm{match}}$; their sign
 encodes which side of the solution $\omega_0$ lies on (see header notes).
@@ -107,18 +110,21 @@ static void gle_shoot_observer (void *ctx, double s, const double y[4]) {
     ob->user_sampler (ob->user_ctx, s, y);
 }
 
-static double gle_shoot_residual (const GLEParams *p, double omega0,
-				  GLESolution *out, GLESampler sampler,
-				  void *sctx) {
+/* Prepared-only kernel; use gle_shoot_residual() at an API boundary. */
+static inline double gle_shoot_residual_prepared (const GLEParams *p,
+						  double omega0,
+						  GLESolution *out,
+						  GLESampler sampler,
+						  void *sctx) {
   double s = gle_s0 (p);
   double y[4] = { gle_h0 (p), p->theta_mic, omega0,
 		  gle_s0 (p)*cos (p->theta_mic) };
   gle_shoot_obs ob = { p->theta_mic, sampler, sctx };
 
   int omega_zero = (p->outer_bc == GLE_OUTER_OMEGA_ZERO);
-  int st = gle_integrate (p, &s, y,
-			  omega_zero ? -1.0 : p->H_match, p->smax_cap,
-			  gle_shoot_observer, &ob);
+  int st = gle_integrate_prepared (p, &s, y,
+				   omega_zero ? -1.0 : p->H_match,
+				   p->smax_cap, gle_shoot_observer, &ob);
 
   double R;
   if (omega_zero && st == GLE_ERR_SMAX)
@@ -153,6 +159,21 @@ static double gle_shoot_residual (const GLEParams *p, double omega0,
   return R;
 }
 
+static inline double gle_shoot_residual (const GLEParams *p, double omega0,
+					  GLESolution *out,
+					  GLESampler sampler, void *sctx) {
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK) {
+    if (out) {
+      out->residual = NAN;
+      out->status = GLE_SHOOT_FAIL;
+    }
+    return NAN;
+  }
+  return gle_shoot_residual_prepared (&prepared, omega0, out, sampler, sctx);
+}
+
 /**
 ### gle_shoot()
 
@@ -175,8 +196,10 @@ Strategy:
 #### Returns
 `0` on convergence, `1` on failure (`sol->status` mirrors this).
 */
-static int gle_shoot (const GLEParams *p, double omega0_guess,
-		      GLESolution *sol) {
+/* Prepared-only kernel; use gle_shoot() at an API boundary. */
+static inline int gle_shoot_prepared (const GLEParams *p,
+				      double omega0_guess,
+				      GLESolution *sol) {
   /* the 5e-8 floor reflects the e^s noise amplification of the bath-
      matching mode; the omega-zero residual has O(1) sensitivity and
      supports a much tighter tolerance (validated against scipy) */
@@ -185,7 +208,7 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
   int iters = 0;
 
   /* --- damped Newton --- */
-  double R = gle_shoot_residual (p, w, sol, NULL, NULL);
+  double R = gle_shoot_residual_prepared (p, w, sol, NULL, NULL);
   double w_best = w, R_best = fabs (R);
   for (int it = 0; it < 60 && fabs (R) < 1.0e2; it++) {
     iters++;
@@ -195,8 +218,8 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
       return 0;
     }
     double dw = fmax (1.0e-8*fabs (w), 1.0e-11);
-    double Rp = gle_shoot_residual (p, w + dw, NULL, NULL, NULL);
-    double Rm = gle_shoot_residual (p, w - dw, NULL, NULL, NULL);
+    double Rp = gle_shoot_residual_prepared (p, w + dw, NULL, NULL, NULL);
+    double Rm = gle_shoot_residual_prepared (p, w - dw, NULL, NULL, NULL);
     double dRdw = (Rp - Rm)/(2.0*dw);
     if (dRdw == 0.0 || !isfinite (dRdw))
       break;
@@ -204,12 +227,13 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
     double cap = 0.25*fmax (fabs (w), 1.0);   /* damping */
     if (fabs (step) > cap)
       step = copysign (cap, step);
-    double wn = w + step, Rn = gle_shoot_residual (p, wn, sol, NULL, NULL);
+    double wn = w + step;
+    double Rn = gle_shoot_residual_prepared (p, wn, sol, NULL, NULL);
     /* simple backtracking */
     for (int bt = 0; bt < 8 && fabs (Rn) > fabs (R) && fabs (R) < 1e2; bt++) {
       step *= 0.5;
       wn = w + step;
-      Rn = gle_shoot_residual (p, wn, sol, NULL, NULL);
+      Rn = gle_shoot_residual_prepared (p, wn, sol, NULL, NULL);
       iters++;
     }
     w = wn;
@@ -227,15 +251,15 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
 
   /* --- bracket around the best Newton iterate seen, then bisect --- */
   double a = w_best, b = w_best;
-  double Ra = gle_shoot_residual (p, a, NULL, NULL, NULL), Rb = Ra;
+  double Ra = gle_shoot_residual_prepared (p, a, NULL, NULL, NULL), Rb = Ra;
   double span = fmax (1.0e-6*fabs (w_best), 1.0e-6);
   const double bracket_center = w_best;
   int bracketed = 0;
   for (int it = 0; it < 200 && !bracketed; it++) {
     a = bracket_center - span;
     b = bracket_center + span;
-    Ra = gle_shoot_residual (p, a, NULL, NULL, NULL);
-    Rb = gle_shoot_residual (p, b, NULL, NULL, NULL);
+    Ra = gle_shoot_residual_prepared (p, a, NULL, NULL, NULL);
+    Rb = gle_shoot_residual_prepared (p, b, NULL, NULL, NULL);
     iters += 2;
     if (isfinite (Ra) && fabs (Ra) < R_best) {
       w_best = a;
@@ -258,7 +282,7 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
   for (int it = 0; it < 200; it++) {
     iters++;
     double m = 0.5*(a + b);
-    double Rm = gle_shoot_residual (p, m, NULL, NULL, NULL);
+    double Rm = gle_shoot_residual_prepared (p, m, NULL, NULL, NULL);
     if (isfinite (Rm) && fabs (Rm) < R_best) {
       w_best = m;
       R_best = fabs (Rm);
@@ -276,10 +300,23 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
      because R(m) met tolR, the midpoint of the updated bracket is a new,
      unevaluated point and can lie outside the selected tolerance. */
   w = w_best;
-  R = gle_shoot_residual (p, w, sol, NULL, NULL);
+  R = gle_shoot_residual_prepared (p, w, sol, NULL, NULL);
   sol->iters = iters;
   sol->status = (fabs (R) < tolR ? GLE_SHOOT_CONVERGED : GLE_SHOOT_FAIL);
   return sol->status == GLE_SHOOT_CONVERGED ? 0 : 1;
+}
+
+static inline int gle_shoot (const GLEParams *p, double omega0_guess,
+			     GLESolution *sol) {
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (!sol ||
+      gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK) {
+    if (sol)
+      sol->status = GLE_SHOOT_FAIL;
+    return 1;
+  }
+  return gle_shoot_prepared (&prepared, omega0_guess, sol);
 }
 
 /**
@@ -310,17 +347,19 @@ but the smallest steps.
 `0` on convergence (final $\mathrm{Ca}$ left in `p->Ca` and reflected in
 `sol`), `1` on failure.
 */
-static int gle_solve_ca (GLEParams *p, double omega0, double Ca_guess,
-			 GLESolution *sol) {
+/* Prepared-only kernel; use gle_solve_ca() at an API boundary. */
+static inline int gle_solve_ca_prepared (GLEParams *p, double omega0,
+					 double Ca_guess,
+					 GLESolution *sol) {
   const double tolR = 5.0e-8;
   int iters = 0;
 
   /* --- secant --- */
   double ca0 = Ca_guess, ca1 = Ca_guess*(1.0 + 1.0e-6);
   p->Ca = ca0;
-  double R0 = gle_shoot_residual (p, omega0, sol, NULL, NULL);
+  double R0 = gle_shoot_residual_prepared (p, omega0, sol, NULL, NULL);
   p->Ca = ca1;
-  double R1 = gle_shoot_residual (p, omega0, sol, NULL, NULL);
+  double R1 = gle_shoot_residual_prepared (p, omega0, sol, NULL, NULL);
   for (int it = 0; it < 30; it++) {
     iters++;
     if (fabs (R1) < tolR && fabs (R1) < 1.0e2) {
@@ -340,7 +379,7 @@ static int gle_solve_ca (GLEParams *p, double omega0, double Ca_guess,
     ca0 = ca1; R0 = R1;
     ca1 = ca2;
     p->Ca = ca1;
-    R1 = gle_shoot_residual (p, omega0, sol, NULL, NULL);
+    R1 = gle_shoot_residual_prepared (p, omega0, sol, NULL, NULL);
   }
 
   /* --- bracket + bisection --- */
@@ -353,9 +392,9 @@ static int gle_solve_ca (GLEParams *p, double omega0, double Ca_guess,
     if (a <= 0.0)
       a = 1.0e-3*Ca_guess;
     p->Ca = a;
-    Ra = gle_shoot_residual (p, omega0, NULL, NULL, NULL);
+    Ra = gle_shoot_residual_prepared (p, omega0, NULL, NULL, NULL);
     p->Ca = b;
-    Rb = gle_shoot_residual (p, omega0, NULL, NULL, NULL);
+    Rb = gle_shoot_residual_prepared (p, omega0, NULL, NULL, NULL);
     iters += 2;
     if (isfinite (Ra) && isfinite (Rb) && Ra*Rb < 0.0)
       bracketed = 1;
@@ -374,7 +413,7 @@ static int gle_solve_ca (GLEParams *p, double omega0, double Ca_guess,
     iters++;
     m = 0.5*(a + b);
     p->Ca = m;
-    Rm = gle_shoot_residual (p, omega0, NULL, NULL, NULL);
+    Rm = gle_shoot_residual_prepared (p, omega0, NULL, NULL, NULL);
     if (Ra*Rm <= 0.0)
       b = m;
     else {
@@ -384,10 +423,25 @@ static int gle_solve_ca (GLEParams *p, double omega0, double Ca_guess,
       break;
   }
   p->Ca = m;
-  double R = gle_shoot_residual (p, omega0, sol, NULL, NULL);
+  double R = gle_shoot_residual_prepared (p, omega0, sol, NULL, NULL);
   sol->iters = iters;
   sol->status = (fabs (R) < tolR ? GLE_SHOOT_CONVERGED : GLE_SHOOT_FAIL);
   return sol->status == GLE_SHOOT_CONVERGED ? 0 : 1;
+}
+
+static inline int gle_solve_ca (GLEParams *p, double omega0, double Ca_guess,
+				GLESolution *sol) {
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (!p || !sol ||
+      gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK) {
+    if (sol)
+      sol->status = GLE_SHOOT_FAIL;
+    return 1;
+  }
+  int status = gle_solve_ca_prepared (&prepared, omega0, Ca_guess, sol);
+  p->Ca = prepared.Ca;
+  return status;
 }
 
 #endif /* GLE_SHOOT_H */

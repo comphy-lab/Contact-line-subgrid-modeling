@@ -29,6 +29,7 @@ Last updated: Jul 20, 2026
 #include <stdlib.h>
 #include <string.h>
 #include "gle-model.h"
+#include "gle-slip-closure.h"
 #include "gle-continuation.h"
 
 /**
@@ -80,6 +81,43 @@ static int gle_parse_long (const char *val, long *out) {
 }
 
 /**
+### gle_parse_model(), gle_parse_cutoff_method()
+
+Parse the named runtime physics selectors. Canonical spellings use underscores;
+hyphenated Luo--Gao spellings and descriptive cutoff aliases are accepted for
+command-line convenience. Output always uses the canonical names returned by
+`gle_model_name()` and `gle_cutoff_method_name()`.
+*/
+static int gle_parse_model (const char *val, int *out) {
+  if (!strcmp (val, "chan") || !strcmp (val, "chan_etal"))
+    *out = GLE_MODEL_CHAN;
+  else if (!strcmp (val, "luo_gao") || !strcmp (val, "luo-gao"))
+    *out = GLE_MODEL_LUO_GAO;
+  else
+    return 0;
+  return 1;
+}
+
+static int gle_parse_cutoff_method (const char *val, int *out) {
+  if (!strcmp (val, "manual"))
+    *out = GLE_CUTOFF_MANUAL;
+  else if (!strcmp (val, "auto"))
+    *out = GLE_CUTOFF_AUTO;
+  else if (!strcmp (val, "scott_hocking"))
+    *out = GLE_CUTOFF_SCOTT_HOCKING;
+  else if (!strcmp (val, "corrected_right_angle"))
+    *out = GLE_CUTOFF_CORRECTED_RIGHT_ANGLE;
+  else if (!strcmp (val, "reference_table") || !strcmp (val, "table"))
+    *out = GLE_CUTOFF_REFERENCE_TABLE;
+  else if (!strcmp (val, "luo_gao_approx") ||
+	   !strcmp (val, "luo-gao-approx"))
+    *out = GLE_CUTOFF_LUO_GAO_APPROX;
+  else
+    return 0;
+  return 1;
+}
+
+/**
 ### gle_kv_apply()
 
 Applies one `key=value` pair to the parameter structs. Unknown keys warn on
@@ -116,6 +154,20 @@ static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
     if (!x_ok)
       return gle_bad_numeric (val, key);
     p->theta_mic = x*M_PI/180.0;
+    return 1;
+  }
+  if (!strcmp (key, "gle_model")) {
+    if (!gle_parse_model (val, &p->model)) {
+      fprintf (stderr, "gle-params: unknown gle_model '%s'\n", val);
+      return -1;
+    }
+    return 1;
+  }
+  if (!strcmp (key, "c_method")) {
+    if (!gle_parse_cutoff_method (val, &p->cutoff_method)) {
+      fprintf (stderr, "gle-params: unknown c_method '%s'\n", val);
+      return -1;
+    }
     return 1;
   }
   if (!strcmp (key, "geometry")) {
@@ -213,8 +265,16 @@ static inline int gle_params_validate (const GLEParams *p,
 	       "mu_r must be finite and non-negative");
   GLE_REQUIRE (isfinite (p->slip) && p->slip > 0.0,
 	       "slip must be finite and positive");
-  GLE_REQUIRE (isfinite (p->c_slip) && p->c_slip > 0.0,
-	       "c_slip must be finite and positive");
+  GLE_REQUIRE (p->model == GLE_MODEL_CHAN ||
+	       p->model == GLE_MODEL_LUO_GAO,
+	       "gle_model selector is invalid");
+  GLE_REQUIRE (p->cutoff_method >= GLE_CUTOFF_MANUAL &&
+	       p->cutoff_method <= GLE_CUTOFF_LUO_GAO_APPROX,
+	       "c_method selector is invalid");
+  GLE_REQUIRE (p->model != GLE_MODEL_CHAN ||
+	       p->cutoff_method != GLE_CUTOFF_MANUAL ||
+	       (isfinite (p->c_slip) && p->c_slip > 0.0),
+	       "manual Chan c_slip must be finite and positive");
   GLE_REQUIRE (isfinite (p->theta_mic) && p->theta_mic > 0.0 &&
 	       p->theta_mic < M_PI,
 	       "theta_mic_deg must lie strictly between 0 and 180");
@@ -245,6 +305,29 @@ static inline int gle_params_validate (const GLEParams *p,
   GLE_REQUIRE (p->max_steps > 0, "max_steps must be positive");
 #undef GLE_REQUIRE
   return 0;
+}
+
+/**
+### gle_params_prepare()
+
+Applies the selected case-level cutoff policy after all file and command-line
+overrides are known. For the direct Luo--Gao model the returned provenance is
+`not_used`; no Chan cutoff is evaluated.
+
+#### Returns
+`0` when the model is ready to solve, otherwise `1` after a concise diagnostic.
+*/
+static inline int gle_params_prepare (GLEParams *p, GLECutoffResult *cutoff,
+				      const char *driver) {
+  int status = gle_model_prepare (p, cutoff);
+  if (status == GLE_CUTOFF_OK)
+    return 0;
+  fprintf (stderr,
+	   "%s: cannot prepare gle_model=%s with c_method=%s: %s\n",
+	   driver, gle_model_name (p ? p->model : -1),
+	   gle_cutoff_method_name (p ? p->cutoff_method : -1),
+	   gle_cutoff_status_name (status));
+  return 1;
 }
 
 /**

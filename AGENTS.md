@@ -15,11 +15,15 @@ and couples to a Basilisk two-phase DNS above it.
   BVP in `gle-shoot.h`; fold-free collocation branch tracer in
   `gle-collocate.h`; legacy shooting continuation in `gle-continuation.h`; the
   GLE ↔ DNS seam in `gle-basilisk.h`; the `key=value` loader in `gle-params.h`.
-- `gle-ode/` — standalone drivers (`gle-solve.c`, `gle-continuation.c`), the
-  calibrated `fig4b.params`, and a self-contained `Makefile`.
+- `gle-ode/` — standalone drivers (`gle-cutoff.c`, `gle-solve.c`,
+  `gle-continuation.c`), the calibrated `fig4b.params`, and a self-contained
+  `Makefile`; `reference-generator/` contains the open-source Scott--Hocking
+  one-phase integral solver and two-phase inner-Stokes FEM generator, with
+  their convergence evidence.
 - `simulationCases/` — Basilisk DNS cases; `contactline-gle.c` is the
   GLE-coupled case, `contactline.c` the fixed-angle baseline.
-- `postProcess/` — `uv`-runnable plotting (`plot-fig4b.py`) and cross-validation
+- `postProcess/` — `uv`-runnable plotting (`plot-fig4b.py`,
+  `plot-finite-m-closure-comparison.py`) and cross-validation
   (`compare-c-python.py`); each script carries inline PEP 723 dependencies.
 - `python/` — the historical `solve_bvp` reference (`GLE_solver.py`) and the
   linearized-GLE fixture (`validate-linearized-gle.py` + `reference-data/`).
@@ -32,8 +36,9 @@ and couples to a Basilisk two-phase DNS above it.
 ## Build and test
 
 ```bash
-make                 # build gle-solve and gle-continuation (C99 + libm)
+make                 # build gle-cutoff, gle-solve and gle-continuation
 make test            # smoke solve; compiles the Basilisk case when qcc exists
+sh tests/verify-reference-table.sh # independently check frozen table evidence
 ./reproduce-fig4b.sh # trace the branch and regenerate the Fig. 4b figure
 # Basilisk DNS case, serial:
 cd simulationCases && qcc -O2 -disable-dimensions -I../src-local \
@@ -61,13 +66,16 @@ Run all of the following before committing a change that touches the model or
 either solver:
 
 1. `make test` — smoke solve plus the `qcc` compile check.
-2. `./reproduce-fig4b.sh` — the fold must land within tolerance of
+2. `sh tests/verify-reference-table.sh` — the frozen one- and two-phase
+   reference data, independent checkpoints, interpolation audit, and emitted C
+   headers must reproduce from their public generators.
+3. `./reproduce-fig4b.sh` — the fold must land within tolerance of
    $\mathrm{Ca}^{*} = 1.0544\times10^{-2}$ (fold height $\Delta^{*} = 1.440$ is
    the out-of-sample check, not fit to).
-3. `uv run postProcess/compare-c-python.py --quick` — C vs Python mobility to
+4. `uv run postProcess/compare-c-python.py --quick` — C vs Python mobility to
    machine precision, profile agreement $< 2.3\times10^{-4}$ in the
    well-conditioned window.
-4. Gravity-rescaling invariance:
+5. Gravity-rescaling invariance:
    ```bash
    cd gle-ode
    ./gle-continuation fig4b.params slip=3.73e-6 grav=4.0 Delta_max=1.8

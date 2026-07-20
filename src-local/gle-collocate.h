@@ -289,11 +289,14 @@ The $4N{+}4$ "band part" of the residual at node states `y`, parameters
 
 The two border conditions ($h_N = H$ and $\zeta_N + \omega_N = \Delta^{*}$)
 are evaluated separately by `gle_colloc_border_residual()`.
+The public function resolves a local parameter copy; repeated assembly calls
+use the prepared-only kernel directly.
 */
-static inline void gle_colloc_band_residual (const GLECollocation *c,
-					     const GLEParams *p,
-					     const double *y, double s_end,
-					     double *res) {
+/* Prepared-only kernel; use gle_colloc_band_residual() at an API boundary. */
+static inline void
+gle_colloc_band_residual_prepared (const GLECollocation *c,
+				    const GLEParams *p, const double *y,
+				    double s_end, double *res) {
   int N = c->N;
   double s0 = gle_s0 (p);
   res[0] = y[0] - gle_h0 (p);
@@ -323,6 +326,22 @@ static inline void gle_colloc_band_residual (const GLECollocation *c,
   res[4*N + 3] = y[4*N + 2] - gle_static_curvature (y[4*N + 1], p->grav);
 }
 
+static inline void gle_colloc_band_residual (const GLECollocation *c,
+					     const GLEParams *p,
+					     const double *y, double s_end,
+					     double *res) {
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (!c || !y || !res ||
+      gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK) {
+    if (c && res && c->N >= 0 && c->N <= (INT_MAX - 4)/4)
+      for (int i = 0; i < 4*c->N + 4; i++)
+	res[i] = NAN;
+    return;
+  }
+  gle_colloc_band_residual_prepared (c, &prepared, y, s_end, res);
+}
+
 static inline void gle_colloc_border_residual (const GLECollocation *c,
 					       const GLEParams *p,
 					       const double *y,
@@ -340,16 +359,20 @@ Builds the band Jacobian (analytic in the node states: per-cell $4\times4$
 blocks by finite differences of the *local* midpoint RHS — local FD carries
 no global error amplification) and the two border columns (full-residual
 finite differences in $\mathrm{Ca}$ and $s_{\mathrm{end}}$).
+The public function prepares once; Newton iterations use the prepared-only
+kernel directly.
 */
-static inline void gle_colloc_assemble (GLECollocation *c, GLEParams *p,
-					double Delta_target,
-					double rb[2], double rbCa[2],
-					double rbS[2]) {
+/* Prepared-only kernel; use gle_colloc_assemble() at an API boundary. */
+static inline void gle_colloc_assemble_prepared (GLECollocation *c,
+						 GLEParams *p,
+						 double Delta_target,
+						 double rb[2], double rbCa[2],
+						 double rbS[2]) {
   int N = c->N;
   int n = 4*N + 4;
   gle_band_zero (&c->band);
 
-  gle_colloc_band_residual (c, p, c->y, c->s_end, c->res);
+  gle_colloc_band_residual_prepared (c, p, c->y, c->s_end, c->res);
   gle_colloc_border_residual (c, p, c->y, Delta_target, rb);
 
   /* rows 0..2: identity-like on y_0 */
@@ -404,7 +427,7 @@ static inline void gle_colloc_assemble (GLECollocation *c, GLEParams *p,
   double dCa = 1.0e-7*fmax (fabs (p->Ca), 1.0e-6);
   double saveCa = p->Ca;
   p->Ca = saveCa + dCa;
-  gle_colloc_band_residual (c, p, c->y, c->s_end, c->colCa);
+  gle_colloc_band_residual_prepared (c, p, c->y, c->s_end, c->colCa);
   double rbp[2];
   gle_colloc_border_residual (c, p, c->y, Delta_target, rbp);
   rbCa[0] = (rbp[0] - rb[0])/dCa;
@@ -414,12 +437,30 @@ static inline void gle_colloc_assemble (GLECollocation *c, GLEParams *p,
   p->Ca = saveCa;
 
   double dS = 1.0e-7*fmax (fabs (c->s_end), 1.0);
-  gle_colloc_band_residual (c, p, c->y, c->s_end + dS, c->colS);
+  gle_colloc_band_residual_prepared (c, p, c->y, c->s_end + dS, c->colS);
   gle_colloc_border_residual (c, p, c->y, Delta_target, rbp);
   rbS[0] = (rbp[0] - rb[0])/dS;
   rbS[1] = (rbp[1] - rb[1])/dS;
   for (int i = 0; i < n; i++)
     c->colS[i] = (c->colS[i] - c->res[i])/dS;
+}
+
+static inline void gle_colloc_assemble (GLECollocation *c, GLEParams *p,
+					double Delta_target,
+					double rb[2], double rbCa[2],
+					double rbS[2]) {
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (!c || !rb || !rbCa || !rbS ||
+      gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK) {
+    if (rb && rbCa && rbS)
+      for (int i = 0; i < 2; i++)
+	rb[i] = rbCa[i] = rbS[i] = NAN;
+    return;
+  }
+  gle_colloc_assemble_prepared (c, &prepared, Delta_target, rb, rbCa, rbS);
+  if (p)
+    p->Ca = prepared.Ca;
 }
 
 /**
@@ -442,12 +483,16 @@ static inline double gle_colloc_border_dot (int which, int N,
 Damped Newton on the bordered system at fixed `Delta_target`. `c->y`,
 `c->Ca`, `c->s_end` must hold a starting guess (typically the previous
 branch point). On success, `c->Delta` is updated and `p->Ca = c->Ca`.
+The selected model is resolved once on a local copy; only the final `Ca` is
+written back to the caller-owned parameter set.
 
 #### Returns
 `0` on convergence, `1` on failure (state left unspecified).
 */
-static inline int gle_colloc_solve (GLECollocation *c, GLEParams *p,
-				    double Delta_target, int *iters_out) {
+/* Prepared-only kernel; use gle_colloc_solve() at an API boundary. */
+static inline int gle_colloc_solve_prepared (GLECollocation *c, GLEParams *p,
+					     double Delta_target,
+					     int *iters_out) {
   int N = c->N, n = 4*N + 4;
   const int maxit = 30;
   const double tol = 1.0e-10;
@@ -455,7 +500,7 @@ static inline int gle_colloc_solve (GLECollocation *c, GLEParams *p,
   for (int it = 0; it < maxit; it++) {
     double rb[2], rbCa[2], rbS[2];
     p->Ca = c->Ca;
-    gle_colloc_assemble (c, p, Delta_target, rb, rbCa, rbS);
+    gle_colloc_assemble_prepared (c, p, Delta_target, rb, rbCa, rbS);
 
     double rnorm = 0.0;
     for (int i = 0; i < n; i++)
@@ -536,13 +581,29 @@ static inline int gle_colloc_solve (GLECollocation *c, GLEParams *p,
   return 1;
 }
 
+static inline int gle_colloc_solve (GLECollocation *c, GLEParams *p,
+				    double Delta_target, int *iters_out) {
+  if (!c || !p || c->N < 2 || c->N > (INT_MAX - 4)/4)
+    return 1;
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK)
+    return 1;
+  int status = gle_colloc_solve_prepared (c, &prepared, Delta_target,
+					  iters_out);
+  p->Ca = prepared.Ca;
+  return status;
+}
+
 /**
 ### gle_colloc_seed_from_shoot()
 
 Populates the mesh from a converged shooting solution: re-integrates the
 trajectory with `gle_shoot_residual()`'s sampler, then interpolates
 $(h,\theta,\omega,\zeta)$ onto the log mesh in $s$. Sets `c->Ca` and
-`c->s_end` from the shot.
+`c->s_end` from the shot. An integration that stops at `smax_cap` before the
+outer condition is rejected even if it produced enough samples to fill a
+mesh.
 
 #### Returns
 `0` on success.
@@ -581,13 +642,13 @@ static void gle_seed_sampler (void *ctx, double s, const double y[4]) {
   b->n++;
 }
 
-static inline int gle_colloc_seed_from_shoot (GLECollocation *c,
-					      GLEParams *p,
-					      const GLESolution *sol) {
+static inline int
+gle_colloc_seed_from_shoot_prepared (GLECollocation *c, GLEParams *p,
+				      const GLESolution *sol) {
   gle_seed_buf buf = { NULL, NULL, 0, 0 };
   GLESolution tmp;
-  gle_shoot_residual (p, sol->omega0, &tmp, gle_seed_sampler, &buf);
-  if (buf.n < 2) {
+  gle_shoot_residual_prepared (p, sol->omega0, &tmp, gle_seed_sampler, &buf);
+  if (buf.n < 2 || tmp.status != GLE_SHOOT_CONVERGED) {
     free (buf.s);
     free (buf.y4);
     return 1;
@@ -610,6 +671,18 @@ static inline int gle_colloc_seed_from_shoot (GLECollocation *c,
   return 0;
 }
 
+static inline int gle_colloc_seed_from_shoot (GLECollocation *c,
+					      GLEParams *p,
+					      const GLESolution *sol) {
+  if (!c || !p || !sol || c->N < 2 || c->N > (INT_MAX - 4)/4)
+    return 1;
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK)
+    return 1;
+  return gle_colloc_seed_from_shoot_prepared (c, &prepared, sol);
+}
+
 /**
 ### gle_colloc_march()
 
@@ -625,11 +698,15 @@ as `gle_branch_csv_header()`), tracks the running $\mathrm{Ca}$ maximum, and
 refines the fold location by a quadratic fit of $\mathrm{Ca}(\Delta)$
 through the maximum and its neighbours.
 
+The selected model is resolved once on a local copy for the entire march;
+every Newton/Jacobian evaluation uses the prepared-only kernel.
+
 #### Parameters
 - `c`: seeded collocation problem (see `gle_colloc_seed_from_shoot()`).
 - `p`: model parameters.
 - `Delta_max`: march until the meniscus rise exceeds this.
 - `dDelta0`: initial step in $\Delta$.
+- `dDelta_cap`: maximum adaptive step in $\Delta$.
 - `max_points`: point budget.
 - `csv`: optional output stream.
 - `fold_Ca`, `fold_Delta`: optional fold estimate outputs.
@@ -638,12 +715,14 @@ through the maximum and its neighbours.
 #### Returns
 The number of accepted branch points.
 */
-static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
-				    double Delta_max, double dDelta0,
-				    double dDelta_cap,
-				    int max_points, FILE *csv,
-				    double *fold_Ca, double *fold_Delta,
-				    int verbose) {
+/* Prepared-only kernel; use gle_colloc_march() at an API boundary. */
+static inline int gle_colloc_march_prepared (GLECollocation *c, GLEParams *p,
+					     double Delta_max, double dDelta0,
+					     double dDelta_cap,
+					     int max_points, FILE *csv,
+					     double *fold_Ca,
+					     double *fold_Delta,
+					     int verbose) {
   if (!c || !p || c->N < 2 || c->N > (INT_MAX - 4)/4 ||
       !isfinite (Delta_max) || Delta_max <= 0.0 ||
       !isfinite (dDelta0) || dDelta0 <= 0.0 ||
@@ -667,7 +746,7 @@ static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
   /* consistency solve at the seed's own Delta */
   double D = c->y[4*N + 3] + c->y[4*N + 2]/p->grav;
   int iters;
-  if (gle_colloc_solve (c, p, D, &iters)) {
+  if (gle_colloc_solve_prepared (c, p, D, &iters)) {
     if (verbose)
       fprintf (stderr, "gle_colloc_march: consistency solve failed\n");
     free (y_good); free (y_prev);
@@ -717,7 +796,7 @@ static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
     c->Ca = Ca_good + r*(Ca_good - Ca_prev);
     c->s_end = S_good + r*(S_good - S_prev);
 
-    if (gle_colloc_solve (c, p, D_new, &iters)) {
+    if (gle_colloc_solve_prepared (c, p, D_new, &iters)) {
       dD *= 0.5;
       if (verbose >= 2)
 	fprintf (stderr, "    colloc fail at Delta = %.5f, dDelta -> %.3e\n",
@@ -786,6 +865,25 @@ static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
   free (hist_Ca);
   free (y_good);
   free (y_prev);
+  return npts;
+}
+
+static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
+				    double Delta_max, double dDelta0,
+				    double dDelta_cap,
+				    int max_points, FILE *csv,
+				    double *fold_Ca, double *fold_Delta,
+				    int verbose) {
+  if (!c || !p)
+    return 0;
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK)
+    return 0;
+  int npts = gle_colloc_march_prepared (
+    c, &prepared, Delta_max, dDelta0, dDelta_cap, max_points, csv,
+    fold_Ca, fold_Delta, verbose);
+  p->Ca = prepared.Ca;
   return npts;
 }
 

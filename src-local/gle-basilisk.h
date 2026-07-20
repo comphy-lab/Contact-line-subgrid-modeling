@@ -43,12 +43,9 @@ int main() {
 }
 
 event gle_boundary (i++) {
-  GLEParams gp = gle_default_params ();
+  // Prepare gle_case_params once after theta_e, M and the model are known.
+  GLEParams gp = gle_case_params;
   gp.Ca = Ca;                    // instantaneous plate/line speed
-  gp.slip = lambda_slip;         // in the same units as Delta
-  gp.c_slip = c_slip;            // matching coefficient for theta_e and M
-  gp.theta_mic = theta_e;
-  gp.grav = 0.0;                 // gravity negligible below grid scale
   double omega = gle_dns_curvature_near_cl (...);   // in GLE orientation
   double th = gle_dns_apparent_angle (&gp, omega, Delta, theta_gle);
   if (isfinite (th))
@@ -67,6 +64,7 @@ Last updated: Jul 20, 2026
 #define GLE_BASILISK_H
 
 #include "gle-shoot.h"
+#include "gle-slip-closure.h"
 
 /**
 ### gle_dns_residual()
@@ -79,18 +77,32 @@ $d\theta/ds$ while marching away from the contact line. Curvature sign
 conversion belongs at the DNS call site because it depends on phase and
 coordinate orientation.
 */
-static double gle_dns_residual (const GLEParams *gp, double omega0,
-				double Delta_grid, double omega_dns,
-				double theta_out[1]) {
+static inline double gle_dns_residual_prepared (const GLEParams *gp,
+						double omega0,
+						double Delta_grid,
+						double omega_dns,
+						double theta_out[1]) {
   double s = gle_s0 (gp);
   double y[4] = { gle_h0 (gp), gp->theta_mic, omega0,
 		  gle_s0 (gp)*cos (gp->theta_mic) };
-  int st = gle_integrate (gp, &s, y, Delta_grid, gp->smax_cap, NULL, NULL);
+  int st = gle_integrate_prepared (gp, &s, y, Delta_grid, gp->smax_cap,
+				   NULL, NULL);
   if (st != GLE_OK)
     return (y[1] < gp->theta_mic ? -1.0e3 : 1.0e3);
   if (theta_out)
     theta_out[0] = y[1];
   return y[2] - omega_dns;
+}
+
+static inline double gle_dns_residual (const GLEParams *gp, double omega0,
+				       double Delta_grid, double omega_dns,
+				       double theta_out[1]) {
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (gle_model_prepare_copy (gp, &prepared, &cutoff) != GLE_CUTOFF_OK)
+    return NAN;
+  return gle_dns_residual_prepared (&prepared, omega0, Delta_grid, omega_dns,
+				    theta_out);
 }
 
 /**
@@ -104,8 +116,12 @@ $\omega_0$ is re-estimated internally, so any reasonable angle works — pass
 the current DNS contact angle on the first call).
 
 #### Parameters
-- `gp`: GLE parameters (`Ca`, `slip`, `theta_mic`, tolerances; `grav` is
-  usually 0 at the grid scale).
+- `gp`: GLE parameters (`Ca`, `slip`, `theta_mic`, model and tolerances;
+  `grav` is usually 0 at the grid scale). Calling `gle_model_prepare()` once
+  after setting the case inputs exposes its cutoff provenance and catches a
+  bad case at startup. This entry point also prepares defensively, so an
+  unresolved automatic Chan cutoff can never silently retain the legacy
+  default `c_slip`; the caller-owned parameter set is not modified.
 - `omega_dns`: interface curvature at the DNS grid scale after conversion to
   the GLE's positive-$d\theta/ds$ orientation (`0` recovers a
   curvature-free inner solution).
@@ -116,23 +132,34 @@ the current DNS contact angle on the first call).
 The apparent angle in radians, or `NAN` if no converged solution exists
 (e.g. beyond the entrainment transition at this `Ca`).
 */
-static inline double gle_dns_apparent_angle (GLEParams *gp,
+static inline double gle_dns_apparent_angle (const GLEParams *gp,
 					     double omega_dns,
 					     double Delta_grid,
 					     double theta_guess) {
   const double tolR = 1.0e-8;
+  if (!gp || !isfinite (omega_dns) || !isfinite (Delta_grid) ||
+      !isfinite (theta_guess) || theta_guess <= 0.0 || theta_guess >= M_PI)
+    return NAN;
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (gle_model_prepare_copy (gp, &prepared, &cutoff) != GLE_CUTOFF_OK ||
+	      Delta_grid <= gle_h0 (&prepared))
+    return NAN;
   /* seed omega0: the far-field curvature target plus the wedge estimate
      linking theta_guess to theta_mic across the log region */
   double w = omega_dns
-    + 2.0*(theta_guess - gp->theta_mic)/fmax (Delta_grid, 1.0e-30);
+    + 2.0*(theta_guess - prepared.theta_mic)/fmax (Delta_grid, 1.0e-30);
   double th = theta_guess;
-  double R = gle_dns_residual (gp, w, Delta_grid, omega_dns, &th);
+  double R = gle_dns_residual_prepared (&prepared, w, Delta_grid, omega_dns,
+					&th);
   for (int it = 0; it < 50; it++) {
     if (fabs (R) < tolR)
       return th;
     double dw = fmax (1.0e-8*fabs (w), 1.0e-11);
-    double Rp = gle_dns_residual (gp, w + dw, Delta_grid, omega_dns, NULL);
-    double Rm = gle_dns_residual (gp, w - dw, Delta_grid, omega_dns, NULL);
+    double Rp = gle_dns_residual_prepared (&prepared, w + dw, Delta_grid,
+					   omega_dns, NULL);
+    double Rm = gle_dns_residual_prepared (&prepared, w - dw, Delta_grid,
+					   omega_dns, NULL);
     double dRdw = (Rp - Rm)/(2.0*dw);
     if (dRdw == 0.0 || !isfinite (dRdw))
       break;
@@ -141,7 +168,7 @@ static inline double gle_dns_apparent_angle (GLEParams *gp,
     if (fabs (step) > cap)
       step = copysign (cap, step);
     w += step;
-    R = gle_dns_residual (gp, w, Delta_grid, omega_dns, &th);
+    R = gle_dns_residual_prepared (&prepared, w, Delta_grid, omega_dns, &th);
   }
   if (fabs (R) < tolR)
     return th;
@@ -152,8 +179,8 @@ static inline double gle_dns_apparent_angle (GLEParams *gp,
   for (int it = 0; it < 120 && !bracketed; it++) {
     a = w - span;
     b = w + span;
-    Ra = gle_dns_residual (gp, a, Delta_grid, omega_dns, NULL);
-    Rb = gle_dns_residual (gp, b, Delta_grid, omega_dns, NULL);
+    Ra = gle_dns_residual_prepared (&prepared, a, Delta_grid, omega_dns, NULL);
+    Rb = gle_dns_residual_prepared (&prepared, b, Delta_grid, omega_dns, NULL);
     if (isfinite (Ra) && isfinite (Rb) && Ra*Rb < 0.0)
       bracketed = 1;
     else
@@ -163,7 +190,8 @@ static inline double gle_dns_apparent_angle (GLEParams *gp,
     return NAN;
   for (int it = 0; it < 200; it++) {
     double m = 0.5*(a + b);
-    double Rm2 = gle_dns_residual (gp, m, Delta_grid, omega_dns, &th);
+    double Rm2 = gle_dns_residual_prepared (&prepared, m, Delta_grid,
+					    omega_dns, &th);
     if (Ra*Rm2 <= 0.0)
       b = m;
     else {

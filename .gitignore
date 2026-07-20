@@ -146,8 +146,10 @@ CLAUDE.md
 
 # gle-ode build outputs
 gle-ode/output/
+gle-ode/gle-cutoff
 gle-ode/gle-solve
 gle-ode/gle-continuation
+gle-ode/test-gle-core
 
 # LaTeX build intermediates (keep the compiled docs/*.pdf)
 docs/*.aux

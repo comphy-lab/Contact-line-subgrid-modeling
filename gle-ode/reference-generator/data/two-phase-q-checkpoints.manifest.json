@@ -1,0 +1,204 @@
+{
+  "all_converged": true,
+  "c_reconstruction": "log(c) = 1 + log(sin(theta_rad)) - Q",
+  "convergence_checks": [
+    "coarser mesh",
+    "inner radius divided by four at fixed logarithmic resolution",
+    "outer radius multiplied by four at fixed logarithmic resolution",
+    "fit window shifted by one radial decade",
+    "free fitted Cox slope",
+    "within-window intercept drift",
+    "KKT normwise backward error",
+    "interface and pressure-gauge constraint residual"
+  ],
+  "dataset_kind": "interpolation_checkpoints",
+  "failures": [],
+  "fit_window": {
+    "lower": 100000.0,
+    "upper": 10000000.0
+  },
+  "generator_source_sha256": "42ea7877e84194059c00d9b0c56c2023ddad868c25049e9d1245c92b0ad95cc1",
+  "generator_version": "2",
+  "inputs": [
+    {
+      "rows": 12,
+      "table": "a.csv",
+      "table_sha256": "433149c9fc052f34c38dbac1c7c7db6c83c875950bf220ecc7b11d98ee3da3f3"
+    },
+    {
+      "rows": 9,
+      "table": "a.csv",
+      "table_sha256": "cf3de8e1b03a23ebf0fddeca0f89f5761a6affe2e7f21d85bebaf55ff4dc6c15"
+    },
+    {
+      "rows": 9,
+      "table": "b.csv",
+      "table_sha256": "90e64fc0144a67b1b190313f528175098b655981d1e370f7c3367ee5c481a159"
+    },
+    {
+      "rows": 12,
+      "table": "b.csv",
+      "table_sha256": "b3212f45c26f71d47d36e7dd21f5c56e9eec2ca301427b3fc3118003aabd6ea0"
+    },
+    {
+      "rows": 9,
+      "table": "c.csv",
+      "table_sha256": "265d51903fbd2e82688f81a5764403653681aeb077f6b47e7274f42f2283a0b3"
+    },
+    {
+      "rows": 10,
+      "table": "c.csv",
+      "table_sha256": "57ef20b6590103cf9cabbf84250f6d7f7d7ccb9fa570d3312096a120f0a23fc8"
+    },
+    {
+      "rows": 9,
+      "table": "d.csv",
+      "table_sha256": "1ad6e3786b836c412d2aa2995a6b0f7e69dd288e40614c5ec9222192e9b27efa"
+    },
+    {
+      "rows": 10,
+      "table": "d.csv",
+      "table_sha256": "c16cd18e885f75eb02a865f9c288c4c4cd239ab7d91253a29d6949ecbda706c2"
+    },
+    {
+      "rows": 192,
+      "table": "two-phase-q-checkpoints.csv",
+      "table_sha256": "de1e3a9e17c0e9fd0dd6f61de6f6fc5d8c8425807f16e2ed75ac433c753ffc44"
+    }
+  ],
+  "interpolated_quantity": "Q",
+  "log10_M_grid": [
+    -1.9375,
+    -1.8125,
+    -1.625,
+    -1.375,
+    -1.125,
+    -0.875,
+    -0.625,
+    -0.375,
+    -0.125
+  ],
+  "max_errors": {
+    "constraint_relative_error": 2.690885763553993e-11,
+    "estimated_error_Q": 0.0005441504015519794,
+    "linear_system_backward_error": 4.4907629203367865e-16,
+    "plateau_half_drift_Q": 0.00020652772279613647,
+    "slope_relative_error": 5.8007465315146334e-05
+  },
+  "mesh": {
+    "angular_cells_a": null,
+    "angular_cells_b": null,
+    "inner_radius": 1e-08,
+    "outer_radius": 100000000.0,
+    "radial_cells": 480
+  },
+  "method": "two-sector P2/P1 Stokes FEM with equal Navier slip",
+  "references": [
+    "https://doi.org/10.1017/jfm.2020.499",
+    "https://doi.org/10.1017/jfm.2025.10587",
+    "https://doi.org/10.1093/qjmam/hbaa012"
+  ],
+  "rows": 234,
+  "runtime_interpolation": {
+    "interpolated_quantity": "Q",
+    "log10_M": {
+      "polynomial_degree": 4,
+      "stencil_nodes": 5
+    },
+    "method": "local tensor-product Lagrange",
+    "theta_deg": {
+      "polynomial_degree": 3,
+      "stencil_nodes": 4
+    }
+  },
+  "schema": "table.schema.json",
+  "selection": {
+    "applied": true,
+    "discarded_rows": 38,
+    "input_rows": 272,
+    "log10_M_grid": [
+      -1.9375,
+      -1.8125,
+      -1.625,
+      -1.375,
+      -1.125,
+      -0.875,
+      -0.625,
+      -0.375,
+      -0.125
+    ],
+    "selected_rows": 234,
+    "theta_deg_grid": [
+      31.25,
+      33.75,
+      37.5,
+      42.5,
+      47.5,
+      52.5,
+      57.5,
+      62.5,
+      67.5,
+      72.5,
+      77.5,
+      82.5,
+      87.5,
+      92.5,
+      97.5,
+      102.5,
+      107.5,
+      112.5,
+      117.5,
+      122.5,
+      127.5,
+      132.5,
+      137.5,
+      142.5,
+      146.25,
+      148.75
+    ]
+  },
+  "shards": [
+    "a.csv",
+    "a.csv",
+    "b.csv",
+    "b.csv",
+    "c.csv",
+    "c.csv",
+    "d.csv",
+    "d.csv",
+    "two-phase-q-checkpoints.csv"
+  ],
+  "table": "two-phase-q-checkpoints.csv",
+  "table_sha256": "95988a1ac2159b4c7c7b51d819f4780ca44f752d50d5db1c1f1870c6b23f919e",
+  "theta_deg_grid": [
+    31.25,
+    33.75,
+    37.5,
+    42.5,
+    47.5,
+    52.5,
+    57.5,
+    62.5,
+    67.5,
+    72.5,
+    77.5,
+    82.5,
+    87.5,
+    92.5,
+    97.5,
+    102.5,
+    107.5,
+    112.5,
+    117.5,
+    122.5,
+    127.5,
+    132.5,
+    137.5,
+    142.5,
+    146.25,
+    148.75
+  ],
+  "tolerance_Q": 0.001,
+  "tolerance_linear": 1e-10,
+  "tolerance_slope": 0.002
+}

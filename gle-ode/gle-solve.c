@@ -94,6 +94,8 @@ static void profile_sampler (void *ctx, double s, const double y[4]) {
 
 int main (int argc, char *argv[]) {
   GLEParams p = gle_default_params ();
+  GLECutoffResult cutoff;
+  gle_cutoff_result_reset (&cutoff, p.cutoff_method, GLE_CUTOFF_UNAVAILABLE);
   const char *out_path = "gle-profile.csv";
   double omega0_guess = 0.0;
   int driver_bad = 0;
@@ -125,6 +127,8 @@ int main (int argc, char *argv[]) {
   if (gle_params_load (ac, argv, &p, NULL))
     driver_bad = 1;
   if (gle_params_validate (&p, "gle-solve"))
+    driver_bad = 1;
+  if (!driver_bad && gle_params_prepare (&p, &cutoff, "gle-solve"))
     driver_bad = 1;
   if (driver_bad)
     return 2;
@@ -163,10 +167,24 @@ int main (int argc, char *argv[]) {
 	     sol.Delta - buf.zt[i]);
   fclose (fp);
 
-  printf ("Ca            = %.10e\n", p.Ca);
-  printf ("theta_mic     = %.6f deg\n", p.theta_mic*180.0/M_PI);
-  printf ("slip          = %.3e\n", p.slip);
-  printf ("c_slip        = %.8g\n", p.c_slip);
+  printf ("gle_model          = %s\n", gle_model_name (p.model));
+  printf ("c_method_requested = %s\n",
+	  gle_cutoff_method_name (p.cutoff_method));
+  printf ("c_method_resolved  = %s\n",
+	  cutoff.status == GLE_CUTOFF_NOT_USED ? "not_used" :
+	  gle_cutoff_method_name (cutoff.method));
+  printf ("c_status           = %s\n",
+	  gle_cutoff_status_name (cutoff.status));
+  if (p.model == GLE_MODEL_CHAN) {
+    printf ("c_luo_gao_approximation = %s\n",
+	    cutoff.luo_gao_approximation ? "yes" : "no");
+    printf ("Q                  = %.12e\n", cutoff.Q);
+    printf ("log_c              = %.12e\n", cutoff.log_c);
+    printf ("c_slip             = %.8g\n", p.c_slip);
+  }
+  printf ("Ca                 = %.10e\n", p.Ca);
+  printf ("theta_mic          = %.6f deg\n", p.theta_mic*180.0/M_PI);
+  printf ("slip               = %.3e\n", p.slip);
   printf ("omega0        = %.12e\n", sol.omega0);
   printf ("Delta         = %.12e\n", sol.Delta);
   printf ("theta_app     = %.6f deg\n", sol.theta_app*180.0/M_PI);

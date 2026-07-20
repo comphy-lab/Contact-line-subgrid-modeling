@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "method": "scott-2020-regularised-nystrom-v1",
+  "authority": {
+    "citation": "Julian F. Scott, QJMAM 73 (2020) 279-291",
+    "doi": "10.1093/qjmam/hbaa012",
+    "open_manuscript": "https://hal.science/hal-03227614v1",
+    "equations": [
+      "2.1",
+      "2.2",
+      "2.3",
+      "2.11",
+      "B.4",
+      "B.5"
+    ]
+  },
+  "generator_sha256": "ad64d1fc746573f0ddb77d4c7c70cbb73ea997be025338cbf14aaf058317a04e",
+  "node_csv": "gle-ode/reference-generator/data/scott-hocking-m0-nodes.csv",
+  "node_csv_sha256": "627f75f31e1399c9338caaa77925516d225befafb69bce80032de430a8c0daba",
+  "checkpoint_csv": "gle-ode/reference-generator/data/scott-hocking-m0-checkpoints.csv",
+  "checkpoint_csv_sha256": "c9cea31e765445bbf8dc86fb7392f689e361b9a9ba74a2dfd7e8f04cffc01c37",
+  "node_count": 70,
+  "checkpoint_count": 71,
+  "theta_min": 0.05,
+  "theta_max": 3.12,
+  "max_node_sensitivity_Qi": 6.617853549073516e-05,
+  "max_midpoint_interpolation_error_Qi": 4.2403515357197774e-05,
+  "max_midpoint_error_budget_Qi": 0.00017929765829194366,
+  "max_published_table_error_Qi": 3.1057228500053213e-06,
+  "right_angle_analytic_error_Qi": 0.0,
+  "tolerances": {
+    "node_sensitivity_Qi": 8e-05,
+    "midpoint_interpolation_Qi": 8e-05,
+    "midpoint_error_budget_Qi": 0.00025,
+    "published_table_Qi": 3e-05,
+    "linear_residual": 2e-13
+  },
+  "endpoint_policy": {
+    "small_angle": "Qi=log(theta/3)+regular PCHIP; leading regular coefficient 0.156 enforced",
+    "large_angle": "Qi=pi/(pi-theta)+regular PCHIP; endpoint constant gamma-log(2)-2",
+    "note": "endpoint asymptotic intervals are not labelled analytic exact"
+  },
+  "converged": true,
+  "failures": []
+}

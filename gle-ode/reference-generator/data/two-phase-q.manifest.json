@@ -1,0 +1,415 @@
+{
+  "all_converged": true,
+  "c_reconstruction": "log(c) = 1 + log(sin(theta_rad)) - Q",
+  "convergence_checks": [
+    "coarser mesh",
+    "inner radius divided by four at fixed logarithmic resolution",
+    "outer radius multiplied by four at fixed logarithmic resolution",
+    "fit window shifted by one radial decade",
+    "free fitted Cox slope",
+    "within-window intercept drift",
+    "KKT normwise backward error",
+    "interface and pressure-gauge constraint residual"
+  ],
+  "dataset_kind": "table_nodes",
+  "failures": [],
+  "fit_window": {
+    "lower": 100000.0,
+    "upper": 10000000.0
+  },
+  "generator_source_sha256": "42ea7877e84194059c00d9b0c56c2023ddad868c25049e9d1245c92b0ad95cc1",
+  "generator_version": "2",
+  "inputs": [
+    {
+      "rows": 7,
+      "table": "a.csv",
+      "table_sha256": "2042d65a9441bdf8351b9cdea5df7bcc8cbae11cc2379b3aa45ee9c27048e2d6"
+    },
+    {
+      "rows": 5,
+      "table": "a.csv",
+      "table_sha256": "cda66209a2f64e98f515c7ff9b6ede94685c40ec07338009a15838ead416d55f"
+    },
+    {
+      "rows": 5,
+      "table": "b.csv",
+      "table_sha256": "4f9c45fb29bdf96575a1655cf6b98326731a20d2fa0b094984fe31c77baab0f3"
+    },
+    {
+      "rows": 6,
+      "table": "b.csv",
+      "table_sha256": "9240749eb7615737f3a00a75cd36a2ea36173be5e3d31112aba965c7091f8d57"
+    },
+    {
+      "rows": 6,
+      "table": "c.csv",
+      "table_sha256": "1fdfc8e4cd666fb22fb766bb14510df93c6ae7460be50342407fcdcd3596d67c"
+    },
+    {
+      "rows": 5,
+      "table": "c.csv",
+      "table_sha256": "cc66eda964e23bf20a7fa236671fecc14bf6086a3dfec29c5b01cb13574ddda6"
+    },
+    {
+      "rows": 5,
+      "table": "d.csv",
+      "table_sha256": "151330595fff78c468f04e232d60e65d082352735b10aadc39718ccc33284364"
+    },
+    {
+      "rows": 6,
+      "table": "d.csv",
+      "table_sha256": "a3c856769828ec226d8c35a7d65f275fafa0f6fe7ae99644383258884cef025e"
+    },
+    {
+      "rows": 9,
+      "table": "theta-100.csv",
+      "table_sha256": "430209378a86d0684a84bdf9167c0f546abc228a8e39c5e9f35fe66eacdc5a2c"
+    },
+    {
+      "rows": 9,
+      "table": "theta-105.csv",
+      "table_sha256": "6b16584d5a91c499095e84428723931839bcca93b70b58635d88b1e7d29594ff"
+    },
+    {
+      "rows": 9,
+      "table": "theta-110.csv",
+      "table_sha256": "1c05f4e0ee1df3e4657c536a87bf0fd1ef603c49606945579367d403dadf455e"
+    },
+    {
+      "rows": 9,
+      "table": "theta-115.csv",
+      "table_sha256": "0829836fdac94a13815419e0c5aa4369b2e779ab22a5e755bacca1792aa2d7e7"
+    },
+    {
+      "rows": 9,
+      "table": "theta-120.csv",
+      "table_sha256": "8ed400a93a554ee17944ea5faa3eefbe17c59714ed96a4730ff8b3def54dfe5a"
+    },
+    {
+      "rows": 9,
+      "table": "theta-125.csv",
+      "table_sha256": "2fa40572d963df8041b01f22b4e972f96d5c899256a6cbe5739dcc49ebd05e8d"
+    },
+    {
+      "rows": 9,
+      "table": "theta-130.csv",
+      "table_sha256": "921926c2fdaf0a480f6f156af51231da5c75833c5a5fd2256e4da3d434c13058"
+    },
+    {
+      "rows": 9,
+      "table": "theta-135.csv",
+      "table_sha256": "d350ab229e7e92e5db77ba6c1a2be2dee36c5f5f3805982f2ba7138e9c396ac0"
+    },
+    {
+      "rows": 9,
+      "table": "theta-140.csv",
+      "table_sha256": "c4c73526c7a7a3d89b7978017e66841181fb1a76ae187eeeb9aac5440d7113e1"
+    },
+    {
+      "rows": 9,
+      "table": "theta-145.csv",
+      "table_sha256": "f3532ef0e16454c74e2116c622e270b85f425c7c60b1e7109f6c1c92d4ba5a95"
+    },
+    {
+      "rows": 9,
+      "table": "theta-150.csv",
+      "table_sha256": "251e1a0bb7b1e41fbd0964f097331317cf1de3637468d5bf3a61cbc2ac39da6f"
+    },
+    {
+      "rows": 9,
+      "table": "theta-30.csv",
+      "table_sha256": "9a4be06bc8a37ae0e89da5e1d300e4603237ccfbd9e55b4588810f66b6ba05bd"
+    },
+    {
+      "rows": 9,
+      "table": "theta-35.csv",
+      "table_sha256": "2f826a66ccb96ef19684ea7df118238cb0e8cd38376277aa497f04bc2d6391b5"
+    },
+    {
+      "rows": 9,
+      "table": "theta-40.csv",
+      "table_sha256": "f504e0c4081d32a0bf0eaf3036e29de51b2a435a4d625eede6f1393318d35e36"
+    },
+    {
+      "rows": 9,
+      "table": "theta-45.csv",
+      "table_sha256": "08be21eddc434e539d6ebc96644567005956b79ecb216ffc92261659bd56d5b1"
+    },
+    {
+      "rows": 9,
+      "table": "theta-50.csv",
+      "table_sha256": "983c40a494a4645a66645901b2ec7e7a4dc2f96376253dc493c42028400f03e5"
+    },
+    {
+      "rows": 9,
+      "table": "theta-55.csv",
+      "table_sha256": "b1c7442822ff97d70ba5a758dadfd5e1c1091268f314544a4b535bf1b679fa5f"
+    },
+    {
+      "rows": 9,
+      "table": "theta-60.csv",
+      "table_sha256": "1b870dd1b3a07f5d1abc1744e42ce46f07ca0476537d5dedc535fa7963d522b8"
+    },
+    {
+      "rows": 9,
+      "table": "theta-65.csv",
+      "table_sha256": "13948464ca07187a61882ba8b5a686d2eb941df2edd160aa475e5d57f399f9ff"
+    },
+    {
+      "rows": 9,
+      "table": "theta-70.csv",
+      "table_sha256": "73464b6302566c098caae185af0845eb0653cef540d591413e0182b13836780c"
+    },
+    {
+      "rows": 9,
+      "table": "theta-75.csv",
+      "table_sha256": "9f8184848a5b2ec43957d02d0c2d5be58b18def2b76cc91f4b9bc9094fb5c533"
+    },
+    {
+      "rows": 9,
+      "table": "theta-80.csv",
+      "table_sha256": "c7e0b9f84cef65d7192264f4f0fe2acce08fe594f0e41aea4edc9beb258f46e2"
+    },
+    {
+      "rows": 9,
+      "table": "theta-85.csv",
+      "table_sha256": "593e6f20a98c772b0fa405accb9137be7c440384c53a40280d0255b8047ab5a7"
+    },
+    {
+      "rows": 9,
+      "table": "theta-90.csv",
+      "table_sha256": "f453eeca8ac42e111d999ad551d5524bfdb34a9d9cf44e5316dfd8ad2751b139"
+    },
+    {
+      "rows": 9,
+      "table": "theta-95.csv",
+      "table_sha256": "5b830e2e7f8815dd5ac1500d220c3617f1e1b4cae1b538af22cb5da16b467809"
+    }
+  ],
+  "interpolated_quantity": "Q",
+  "interpolation_validation": {
+    "audit_file": "two-phase-q-interpolation-audit.csv",
+    "audit_sha256": "b5fe2d61a7fa3e3e968d327383c7dfbfa61729d60c5a53d5ff6727ddda2519f9",
+    "checkpoint_file": "two-phase-q-checkpoints.csv",
+    "checkpoint_sha256": "95988a1ac2159b4c7c7b51d819f4780ca44f752d50d5db1c1f1870c6b23f919e",
+    "checkpoints": 234,
+    "covered_cells": 234,
+    "generator_source_sha256": "42ea7877e84194059c00d9b0c56c2023ddad868c25049e9d1245c92b0ad95cc1",
+    "interpolation": {
+      "interpolated_quantity": "Q",
+      "log10_M": {
+        "polynomial_degree": 4,
+        "stencil_nodes": 5
+      },
+      "method": "local tensor-product Lagrange",
+      "theta_deg": {
+        "polynomial_degree": 3,
+        "stencil_nodes": 4
+      }
+    },
+    "max_absolute_error_Q": 0.0003891818435259875,
+    "max_checkpoint_error_budget_Q": 0.0018309427343766338,
+    "max_equal_viscosity_symmetry_error_Q": 8.979052805724308e-07,
+    "max_right_angle_anchor_error_Q": 0.00014457948005042187,
+    "mean_absolute_error_Q": 8.413019720979199e-05,
+    "passed": true,
+    "required_cells": 234,
+    "right_angle_anchor_nodes": 10,
+    "rms_error_Q": 0.00012300789427308704,
+    "scope": "cell-centre empirical local tensor-product Lagrange interpolation using 4 theta_deg nodes (degree 3) and 5 log10(M) nodes (degree 4) discrepancy plus FEM sensitivity estimates; not a global mathematical error bound",
+    "table_sha256": "293d4d0c042a8552c916fa373f030520a6f04c11df0c9e5cb93271dea8a1593e",
+    "tolerance_equal_viscosity_symmetry_Q": 0.001,
+    "tolerance_error_budget_Q": 0.003,
+    "tolerance_observed_Q": 0.001,
+    "tolerance_right_angle_anchor_Q": 0.001,
+    "worst_error_budget_case": {
+      "checkpoint_error_budget_Q": 0.0018309427343766338,
+      "log10_viscosity_ratio": -1.375,
+      "theta_deg": 148.75
+    },
+    "worst_observed_case": {
+      "interpolated_Q": 1.4203110908453713,
+      "log10_viscosity_ratio": -1.625,
+      "reference_Q": 1.4207002726888973,
+      "theta_deg": 137.5
+    },
+    "worst_right_angle_anchor_case": {
+      "fem_Q": 0.2812957208482314,
+      "reference_Q": 0.281151141368181,
+      "viscosity_ratio": 1.0
+    }
+  },
+  "log10_M_grid": [
+    -2.0,
+    -1.875,
+    -1.75,
+    -1.5,
+    -1.25,
+    -1.0,
+    -0.75,
+    -0.5,
+    -0.25,
+    0.0
+  ],
+  "max_errors": {
+    "constraint_relative_error": 5.450877544087823e-11,
+    "estimated_error_Q": 0.000564024911042238,
+    "linear_system_backward_error": 5.764249516611266e-16,
+    "plateau_half_drift_Q": 0.00026845363485852956,
+    "slope_relative_error": 7.5435285305403e-05
+  },
+  "mesh": {
+    "angular_cells_a": null,
+    "angular_cells_b": null,
+    "inner_radius": 1e-08,
+    "outer_radius": 100000000.0,
+    "radial_cells": 480
+  },
+  "method": "two-sector P2/P1 Stokes FEM with equal Navier slip",
+  "phase_exchange_extension": {
+    "identity": "Q(theta,M) = Q(pi-theta,1/M)",
+    "runtime_log10_M_domain": [
+      -2.0,
+      2.0
+    ],
+    "stored_log10_M_domain": [
+      -2.0,
+      0.0
+    ]
+  },
+  "references": [
+    "https://doi.org/10.1017/jfm.2020.499",
+    "https://doi.org/10.1017/jfm.2025.10587",
+    "https://doi.org/10.1093/qjmam/hbaa012"
+  ],
+  "rows": 270,
+  "runtime_interpolation": {
+    "interpolated_quantity": "Q",
+    "log10_M": {
+      "polynomial_degree": 4,
+      "stencil_nodes": 5
+    },
+    "method": "local tensor-product Lagrange",
+    "theta_deg": {
+      "polynomial_degree": 3,
+      "stencil_nodes": 4
+    }
+  },
+  "schema": "table.schema.json",
+  "selection": {
+    "applied": false,
+    "discarded_rows": 0,
+    "input_rows": 270,
+    "log10_M_grid": [
+      -2.0,
+      -1.875,
+      -1.75,
+      -1.5,
+      -1.25,
+      -1.0,
+      -0.75,
+      -0.5,
+      -0.25,
+      0.0
+    ],
+    "selected_rows": 270,
+    "theta_deg_grid": [
+      30.0,
+      32.5,
+      35.0,
+      40.0,
+      45.0,
+      50.0,
+      55.0,
+      60.0,
+      65.0,
+      70.0,
+      75.0,
+      80.0,
+      85.0,
+      90.0,
+      95.0,
+      100.0,
+      105.0,
+      110.0,
+      115.0,
+      120.0,
+      125.0,
+      130.0,
+      135.0,
+      140.0,
+      145.0,
+      147.5,
+      150.0
+    ]
+  },
+  "shards": [
+    "a.csv",
+    "a.csv",
+    "b.csv",
+    "b.csv",
+    "c.csv",
+    "c.csv",
+    "d.csv",
+    "d.csv",
+    "theta-100.csv",
+    "theta-105.csv",
+    "theta-110.csv",
+    "theta-115.csv",
+    "theta-120.csv",
+    "theta-125.csv",
+    "theta-130.csv",
+    "theta-135.csv",
+    "theta-140.csv",
+    "theta-145.csv",
+    "theta-150.csv",
+    "theta-30.csv",
+    "theta-35.csv",
+    "theta-40.csv",
+    "theta-45.csv",
+    "theta-50.csv",
+    "theta-55.csv",
+    "theta-60.csv",
+    "theta-65.csv",
+    "theta-70.csv",
+    "theta-75.csv",
+    "theta-80.csv",
+    "theta-85.csv",
+    "theta-90.csv",
+    "theta-95.csv"
+  ],
+  "table": "two-phase-q.csv",
+  "table_sha256": "293d4d0c042a8552c916fa373f030520a6f04c11df0c9e5cb93271dea8a1593e",
+  "theta_deg_grid": [
+    30.0,
+    32.5,
+    35.0,
+    40.0,
+    45.0,
+    50.0,
+    55.0,
+    60.0,
+    65.0,
+    70.0,
+    75.0,
+    80.0,
+    85.0,
+    90.0,
+    95.0,
+    100.0,
+    105.0,
+    110.0,
+    115.0,
+    120.0,
+    125.0,
+    130.0,
+    135.0,
+    140.0,
+    145.0,
+    147.5,
+    150.0
+  ],
+  "tolerance_Q": 0.001,
+  "tolerance_linear": 1e-10,
+  "tolerance_slope": 0.002
+}

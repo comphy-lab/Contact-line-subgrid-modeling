@@ -28,7 +28,7 @@ Last updated: Jul 20, 2026
 #ifndef GLE_INTEGRATE_H
 #define GLE_INTEGRATE_H
 
-#include "gle-model.h"
+#include "gle-slip-closure.h"
 
 /**
 ## Return codes
@@ -47,7 +47,8 @@ enum gle_integrate_status {
 
 Optional per-step observer: called once per *accepted* step with the current
 arc length and state, e.g. to record interface profiles. Pass `NULL` to
-disable.
+disable. The `y` pointer is borrowed for the callback duration only; copy any
+state that must outlive the call.
 */
 typedef void (*GLESampler) (void *ctx, double s, const double y[4]);
 
@@ -59,13 +60,18 @@ Writes the 5th-order solution into `y5[4]` and returns the scalar error
 estimate normalised by the mixed tolerance
 $\mathrm{tol}_i = \mathrm{atol} + \mathrm{rtol}\,\max(|y_i|, |y^5_i|)$
 (RMS over components; a value $\le 1$ means the step is acceptable).
+The public wrapper resolves a non-manual Chan cutoff on one local parameter
+copy; `gle_integrate()` uses the prepared implementation directly for every
+stage of a trajectory.
 
 #### Returns
 The error norm, or a negative value if the right-hand side reported a domain
 violation at any stage point.
 */
-static inline double gle_rkck_step (const GLEParams *p, const double y[4],
-				    double ds, double y5[4]) {
+/* Prepared-only kernel; use gle_rkck_step() outside this header's internals. */
+static inline double gle_rkck_step_prepared (const GLEParams *p,
+					     const double y[4], double ds,
+					     double y5[4]) {
   static const double
     b21 = 1./5.,
     b31 = 3./40., b32 = 9./40.,
@@ -110,6 +116,16 @@ static inline double gle_rkck_step (const GLEParams *p, const double y[4],
   return sqrt (errsum/4.0);
 }
 
+static inline double gle_rkck_step (const GLEParams *p, const double y[4],
+				    double ds, double y5[4]) {
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (!y || !y5 ||
+      gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK)
+    return -1.0;
+  return gle_rkck_step_prepared (&prepared, y, ds, y5);
+}
+
 /**
 ### gle_integrate()
 
@@ -117,6 +133,9 @@ Integrates the GLE from (`*s`, `y`) until the film thickness reaches
 `h_target` (rising crossing), the arc length exceeds `smax`, or an error
 condition occurs. On success, (`*s`, `y`) hold the state *at* the event to
 within a relative tolerance of $10^{-13}$ on $h$.
+The model closure is prepared once on a local copy before entering the step
+loop, so caller-owned parameters are unchanged and no table lookup occurs in
+the repeated RHS evaluations.
 
 Step control: accept when the Cash–Karp error norm $E \le 1$; the next step is
 $\mathrm{d}s \leftarrow \mathrm{d}s \cdot \min(5,\max(0.2,\,0.9E^{-1/5}))$.
@@ -137,9 +156,11 @@ parameter on the wrong side of the solution).
 #### Returns
 An `enum gle_integrate_status` value.
 */
-static inline int gle_integrate (const GLEParams *p, double *s, double y[4],
-				 double h_target, double smax,
-				 GLESampler sampler, void *sctx) {
+/* Prepared-only kernel; use gle_integrate() as the public entry point. */
+static inline int gle_integrate_prepared (const GLEParams *p, double *s,
+					  double y[4], double h_target,
+					  double smax, GLESampler sampler,
+					  void *sctx) {
   double ds = 0.01*fmax (*s, p->slip);   /* gentle initial step */
   long nstep = 0;
 
@@ -153,7 +174,7 @@ static inline int gle_integrate (const GLEParams *p, double *s, double y[4],
       ds = smax - *s;
 
     double y5[4];
-    double err = gle_rkck_step (p, y, ds, y5);
+    double err = gle_rkck_step_prepared (p, y, ds, y5);
 
     if (err < 0.0) {                     /* domain violation inside step */
       ds *= 0.5;
@@ -176,7 +197,7 @@ static inline int gle_integrate (const GLEParams *p, double *s, double y[4],
       for (int it = 0; it < 200; it++) {
 	double mid = 0.5*(lo + hi);
 	double ym[4];
-	if (gle_rkck_step (p, y, mid, ym) < 0.0) {
+	if (gle_rkck_step_prepared (p, y, mid, ym) < 0.0) {
 	  hi = mid;
 	  continue;
 	}
@@ -188,7 +209,7 @@ static inline int gle_integrate (const GLEParams *p, double *s, double y[4],
 	  break;
       }
       double yf[4];
-      if (gle_rkck_step (p, y, hi, yf) >= 0.0) {
+      if (gle_rkck_step_prepared (p, y, hi, yf) >= 0.0) {
 	for (int i = 0; i < 4; i++)
 	  y[i] = yf[i];
 	*s += hi;
@@ -208,6 +229,18 @@ static inline int gle_integrate (const GLEParams *p, double *s, double y[4],
     ds *= fmin (5.0, fmax (0.2, 0.9*pow (fmax (err, 1e-16), -0.2)));
   }
   return GLE_ERR_STEPS;
+}
+
+static inline int gle_integrate (const GLEParams *p, double *s, double y[4],
+				 double h_target, double smax,
+				 GLESampler sampler, void *sctx) {
+  GLEParams prepared;
+  GLECutoffResult cutoff;
+  if (!s || !y ||
+      gle_model_prepare_copy (p, &prepared, &cutoff) != GLE_CUTOFF_OK)
+    return GLE_ERR_DOMAIN;
+  return gle_integrate_prepared (&prepared, s, y, h_target, smax,
+				  sampler, sctx);
 }
 
 #endif /* GLE_INTEGRATE_H */

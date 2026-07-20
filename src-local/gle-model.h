@@ -1,11 +1,11 @@
 /**
 # gle-model.h — Generalized Lubrication Equation: physics layer
 
-Defines the parameter set and the right-hand side of the Generalized
-Lubrication Equation (GLE) for a moving contact line, in the arc-length
-formulation of [Snoeijer (2006)](https://doi.org/10.1063/1.2171190) with the
-two-fluid Huh–Scriven mobility of Chan, Snoeijer & Eggers (2013) as reviewed by
-[Snoeijer & Andreotti (2013)](https://doi.org/10.1146/annurev-fluid-011212-140734).
+Defines the parameter set and the runtime-dispatched right-hand side of the
+Generalized Lubrication Equation (GLE) for a moving contact line. The shared
+arc-length formulation follows
+[Snoeijer (2006)](https://doi.org/10.1063/1.2171190); callers select either the
+Chan et al. constant-cutoff equation or the Luo--Gao slippery-wedge equation.
 
 The state vector is $y = (h, \theta, \omega, \zeta)$ with $s$ the arc length
 along the liquid–gas interface measured from the contact line:
@@ -14,10 +14,18 @@ $$
 \frac{\mathrm{d}h}{\mathrm{d}s} = \sin\theta, \qquad
 \frac{\mathrm{d}\theta}{\mathrm{d}s} = \omega, \qquad
 \frac{\mathrm{d}\omega}{\mathrm{d}s} =
-   \frac{3\,\mathrm{Ca}\; M(\theta,\mu_r)}
-        {h\,(h+c_{\lambda}\lambda)} + G(\theta), \qquad
+   V_{\rm GLE}(h,\theta;\mathrm{Ca},\mu_r,\lambda) + G(\theta), \qquad
 \frac{\mathrm{d}\zeta}{\mathrm{d}s} = \cos\theta .
 $$
+
+For Chan et al.,
+$V_{\rm GLE}=3\,\mathrm{Ca}\,M(\theta,\mu_r)/
+[h(h+c_\lambda\lambda)]$ and one case-level $c_\lambda$ is resolved before
+integration. Luo & Gao (2025) instead evaluate a local rational
+slippery-wedge mobility at every angle and require no $c_\lambda$; its full
+equation is documented in
+[gle-model-luo-gao.h](gle-model-luo-gao.h). Both implementations remain behind
+the stable `gle_rhs()` API.
 
 Here $h$ is the film thickness measured normal to the plate, $\theta$ the local
 interface inclination with respect to the plate, $\omega = \mathrm{d}\theta/
@@ -102,6 +110,48 @@ enum gle_geometry {
 };
 
 /**
+## Runtime model and cutoff selectors
+
+`GLE_MODEL_CHAN` uses one case-level scalar `c_slip`; `GLE_MODEL_LUO_GAO`
+uses the slip-resolved slippery-wedge equation directly. For the Chan model,
+`cutoff_method` records whether the scalar is supplied manually or resolved by
+one of the named closures in [gle-slip-closure.h](gle-slip-closure.h).
+*/
+enum gle_model {
+  GLE_MODEL_CHAN = 0,
+  GLE_MODEL_LUO_GAO = 1
+};
+
+enum gle_cutoff_method {
+  GLE_CUTOFF_MANUAL = 0,
+  GLE_CUTOFF_AUTO = 1,
+  GLE_CUTOFF_SCOTT_HOCKING = 2,
+  GLE_CUTOFF_CORRECTED_RIGHT_ANGLE = 3,
+  GLE_CUTOFF_REFERENCE_TABLE = 4,
+  GLE_CUTOFF_LUO_GAO_APPROX = 5
+};
+
+static inline const char *gle_model_name (int model) {
+  switch (model) {
+  case GLE_MODEL_CHAN: return "chan";
+  case GLE_MODEL_LUO_GAO: return "luo_gao";
+  default: return "invalid";
+  }
+}
+
+static inline const char *gle_cutoff_method_name (int method) {
+  switch (method) {
+  case GLE_CUTOFF_MANUAL: return "manual";
+  case GLE_CUTOFF_AUTO: return "auto";
+  case GLE_CUTOFF_SCOTT_HOCKING: return "scott_hocking";
+  case GLE_CUTOFF_CORRECTED_RIGHT_ANGLE: return "corrected_right_angle";
+  case GLE_CUTOFF_REFERENCE_TABLE: return "reference_table";
+  case GLE_CUTOFF_LUO_GAO_APPROX: return "luo_gao_approx";
+  default: return "invalid";
+  }
+}
+
+/**
 ### GLEParams
 
 All physical and numerical parameters of a GLE boundary-value problem.
@@ -132,6 +182,14 @@ All physical and numerical parameters of a GLE boundary-value problem.
   cross-validation).
 - `rtol`, `atol`: relative/absolute local error tolerances of the integrator.
 - `max_steps`: integrator step budget per trajectory.
+- `model`: `GLE_MODEL_CHAN` or `GLE_MODEL_LUO_GAO`.
+- `cutoff_method`: named case-level cutoff policy for the Chan model; ignored
+  (with explicit `not_used` provenance) by the direct Luo--Gao model.
+
+The two runtime selectors are deliberately appended after the historical
+fields. Consequently, an older positional aggregate initializer retains its
+meaning and its omitted trailing selectors initialise to the legacy
+`GLE_MODEL_CHAN`/`GLE_CUTOFF_MANUAL` pair (both enum values are zero).
 */
 enum gle_outer_bc {
   GLE_OUTER_STATIC_MENISCUS = 0,
@@ -156,6 +214,10 @@ typedef struct {
   double rtol;
   double atol;
   long max_steps;
+
+  /* Appended for source compatibility with legacy positional aggregates. */
+  int model;
+  int cutoff_method;
 } GLEParams;
 
 /**
@@ -181,6 +243,8 @@ static inline GLEParams gle_default_params (void) {
   p.rtol = 1.0e-10;
   p.atol = 1.0e-12;
   p.max_steps = 2000000;
+  p.model = GLE_MODEL_CHAN;
+  p.cutoff_method = GLE_CUTOFF_MANUAL;
   return p;
 }
 
@@ -195,6 +259,40 @@ static inline double gle_s0 (const GLEParams *p) {
 
 static inline double gle_h0 (const GLEParams *p) {
   return (p->h0 > 0.0 ? p->h0 : gle_s0 (p)*sin (p->theta_mic));
+}
+
+/**
+### gle_model_common_validate()
+
+Checks the parameters required by either viscous model and by the adaptive
+integrator. Unlike the standalone-driver validator, this deliberately does not
+require a static-meniscus outer condition or positive gravity: the Basilisk
+subgrid problem stops at the DNS grid scale and normally uses `grav = 0`.
+
+#### Returns
+`0` for a usable model/integrator parameter set and `1` otherwise.
+*/
+static inline int gle_model_common_validate (const GLEParams *p) {
+  if (!p || !isfinite (p->Ca) || !isfinite (p->mu_r) || p->mu_r < 0.0 ||
+      !isfinite (p->slip) || p->slip <= 0.0 ||
+      !isfinite (p->theta_mic) || p->theta_mic <= 0.0 ||
+      p->theta_mic >= M_PI || !isfinite (p->grav) || p->grav < 0.0 ||
+      (p->geometry != GLE_PLATE_VERTICAL &&
+	 p->geometry != GLE_PLATE_HORIZONTAL) ||
+      (p->model != GLE_MODEL_CHAN && p->model != GLE_MODEL_LUO_GAO) ||
+      p->cutoff_method < GLE_CUTOFF_MANUAL ||
+      p->cutoff_method > GLE_CUTOFF_LUO_GAO_APPROX ||
+      !isfinite (p->s0) || !isfinite (p->h0) ||
+      !isfinite (gle_s0 (p)) || gle_s0 (p) <= 0.0 ||
+      !isfinite (gle_h0 (p)) || gle_h0 (p) <= 0.0 ||
+      !isfinite (p->smax_cap) || p->smax_cap <= gle_s0 (p) ||
+      !isfinite (p->rtol) || p->rtol <= 0.0 ||
+      !isfinite (p->atol) || p->atol <= 0.0 || p->max_steps <= 0 ||
+      (p->model == GLE_MODEL_CHAN &&
+	 p->cutoff_method == GLE_CUTOFF_MANUAL &&
+	 (!isfinite (p->c_slip) || p->c_slip <= 0.0)))
+    return 1;
+  return 0;
 }
 
 /**
@@ -291,16 +389,17 @@ static inline double gle_mobility (double th, double mu_r) {
 /**
 ### gle_slip_prefactor_right_angle()
 
-Returns the closed-form microscopic cutoff coefficient
-$c(\theta_e=\pi/2,\mu_r)$ from Eqs. (2.14)--(2.16) of
-[Chan et al. (2020)](https://doi.org/10.1017/jfm.2020.499).  Hocking's two
-right-angle constants are combined with this file's mobility using
-$F(\pi/2,\mu_r)=-M(\pi/2,\mu_r)$.  At zero viscosity ratio this gives
-$c=\exp(\ln 2-\gamma_E)\simeq1.12$; as $\mu_r\to\infty$, $c\to12.60$.
+Returns the corrected closed-form microscopic cutoff coefficient
+$c(\theta_e=\pi/2,\mu_r)$. Luo & Gao (2025), Eq. (4.14), correct the
+coefficient of $h_b$ in Chan et al. (2020), Eq. (2.15b), from $2\mu_r h_b$ to
+$2h_b$. The corrected equal-slip branch obeys the phase-exchange symmetry
+$c(\pi/2,\mu_r)=c(\pi/2,1/\mu_r)$ and tends to
+$\exp(\ln 2-\gamma_E)\simeq1.12$ at both zero and infinite viscosity ratio.
 
-This helper is deliberately restricted to a right angle.  For arbitrary
-`theta_mic` and `mu_r`, the matching constants must be calculated
-separately and the result supplied through `GLEParams.c_slip`.
+This helper is deliberately restricted to a right angle. For other cases,
+[gle-slip-closure.h](gle-slip-closure.h) selects the Scott--Hocking one-phase
+reference, a supplied two-phase reference table, or the explicitly labelled
+Luo--Gao approximation.
 
 #### Returns
 The positive finite cutoff coefficient, or `NAN` for an invalid viscosity
@@ -312,10 +411,15 @@ static inline double gle_slip_prefactor_right_angle (double mu_r) {
   const double gamma_E = 0.57721566490153286061;
   const double h_a = 4.0/M_PI*(gamma_E - log (2.0));
   const double h_b = -1.539;
-  double h1 = ((1.0 - mu_r)*h_a + 2.0*mu_r*h_b)/(1.0 + mu_r);
-  double h2 = (-(1.0 - mu_r)*h_a + 2.0*mu_r*h_b)/(1.0 + mu_r);
-  double F = -gle_mobility (0.5*M_PI, mu_r);
-  double c = exp ((h1 + mu_r*h2)/(3.0*F));
+  /* Map to [0,1] before forming squares: this makes the exact symmetry
+     explicit and avoids overflow for very large finite viscosity ratios. */
+  double r = (mu_r > 1.0 ? 1.0/mu_r : mu_r);
+  double rm = r - 1.0, rp = r + 1.0;
+  double numer = M_PI*(M_PI*M_PI - 4.0)*
+    (rm*rm*h_a + 4.0*r*h_b);
+  double den = 4.0*M_PI*M_PI*rp*rp - 16.0*rm*rm;
+  double Q = 1.0 + numer/den;
+  double c = exp (1.0 - Q);
   return (isfinite (c) && c > 0.0 ? c : NAN);
 }
 
@@ -326,6 +430,12 @@ Right-hand side of the GLE system. Writes
 $\mathrm{d}y/\mathrm{d}s$ into `dyds[4]` for state `y[4]` $= (h, \theta,
 \omega, \zeta)$.
 
+For a Chan model with a non-manual cutoff selector, callers of this low-level
+RHS must pass parameters already resolved by `gle_model_prepare()`. Public
+integration, shooting, continuation and collocation entry points prepare one
+local copy before their repeated RHS calls; keeping preparation outside this
+hot path avoids table interpolation at every Runge--Kutta stage.
+
 #### Returns
 - `0` on success;
 - `1` if the state left the physical domain ($h \le 0$ or $\theta \notin
@@ -334,15 +444,37 @@ $\mathrm{d}y/\mathrm{d}s$ into `dyds[4]` for state `y[4]` $= (h, \theta,
   integrator treats this as a step failure and retries with a smaller step,
   so trajectories that genuinely leave the domain terminate cleanly.
 */
+/* Model implementations are private behind the stable gle_rhs() facade. */
+#include "gle-model-chan.h"
+#include "gle-model-luo-gao.h"
+
 static inline int gle_rhs (const GLEParams *p, const double y[4],
 			   double dyds[4]) {
-  double hf = y[0], th = y[1], om = y[2];
-  if (hf <= 0.0 || th <= -0.5*M_PI || th >= M_PI)
+  if (!p || !y || !dyds)
     return 1;
-  double mob = gle_mobility (th, p->mu_r);
-  double visc = 3.0*p->Ca*mob/(hf*(hf + p->c_slip*p->slip));
+  double hf = y[0], th = y[1], om = y[2];
+  if (!isfinite (hf) || !isfinite (th) ||
+      !isfinite (om) || !isfinite (p->grav) || p->grav < 0.0 ||
+      (p->geometry != GLE_PLATE_VERTICAL &&
+	 p->geometry != GLE_PLATE_HORIZONTAL) ||
+      hf <= 0.0 || th <= -0.5*M_PI || th >= M_PI)
+    return 1;
+  double visc;
+  int bad;
+  switch (p->model) {
+  case GLE_MODEL_CHAN:
+    bad = gle_chan_viscous_gradient (p, hf, th, &visc);
+    break;
+  case GLE_MODEL_LUO_GAO:
+    bad = gle_luo_gao_viscous_gradient (p, hf, th, &visc);
+    break;
+  default:
+    return 1;
+  }
+  if (bad)
+    return 1;
   double gravity = (p->geometry == GLE_PLATE_VERTICAL ?
-		    -p->grav*cos (th) : p->grav*sin (th));
+			    -p->grav*cos (th) : p->grav*sin (th));
   dyds[0] = sin (th);
   dyds[1] = om;
   dyds[2] = visc + gravity;
