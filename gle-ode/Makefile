@@ -17,7 +17,16 @@ gle-continuation: gle-continuation.c ../src-local/gle-model.h \
                   ../src-local/gle-params.h
 	$(CC) $(CFLAGS) $(INC) -o $@ gle-continuation.c -lm
 
-clean:
-	rm -f gle-solve gle-continuation *.o
+test-gle-core: test-gle-core.c ../src-local/gle-model.h \
+               ../src-local/gle-integrate.h ../src-local/gle-shoot.h \
+               ../src-local/gle-continuation.h ../src-local/gle-collocate.h \
+               ../src-local/gle-params.h
+	$(CC) $(CFLAGS) $(INC) -o $@ test-gle-core.c -lm
 
-.PHONY: all clean
+test: all test-gle-core
+	./test-gle-core
+
+clean:
+	rm -f gle-solve gle-continuation test-gle-core *.o
+
+.PHONY: all test clean

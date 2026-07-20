@@ -9,15 +9,8 @@ all:
 	$(MAKE) -C gle-ode
 
 test: all
-	cd gle-ode && ./gle-solve fig4b.params Ca=1e-6
-	@if which qcc >/dev/null 2>&1; then \
-		echo "qcc found - compiling simulationCases/contactline-gle.c"; \
-		cd simulationCases && qcc -O2 -disable-dimensions -I../src-local \
-			-o /tmp/contactline-gle-test contactline-gle.c -lm && \
-		rm -f /tmp/contactline-gle-test; \
-	else \
-		echo "qcc not found - skipping Basilisk compile check"; \
-	fi
+	$(MAKE) -C gle-ode test
+	sh tests/run-regressions.sh
 
 clean:
 	$(MAKE) -C gle-ode clean

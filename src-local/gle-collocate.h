@@ -70,6 +70,7 @@ Last updated: Jul 20, 2026
 #ifndef GLE_COLLOCATE_H
 #define GLE_COLLOCATE_H
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include "gle-continuation.h"
@@ -89,13 +90,23 @@ typedef struct {
 } gle_band_matrix;
 
 static inline int gle_band_alloc (gle_band_matrix *m, int n, int kl, int ku) {
+  memset (m, 0, sizeof *m);
+  if (n <= 0 || kl < 0 || ku < 0 || kl > (INT_MAX - ku - 1)/2)
+    return 1;
   m->n = n;
   m->kl = kl;
   m->ku = ku;
   m->ldab = 2*kl + ku + 1;
   m->ab = (double *) calloc ((size_t) m->ldab*n, sizeof (double));
   m->ipiv = (int *) calloc (n, sizeof (int));
-  return (m->ab && m->ipiv) ? 0 : 1;
+  if (!m->ab || !m->ipiv) {
+    free (m->ab);
+    free (m->ipiv);
+    m->ab = NULL;
+    m->ipiv = NULL;
+    return 1;
+  }
+  return 0;
 }
 
 static inline void gle_band_free (gle_band_matrix *m) {
@@ -232,6 +243,8 @@ Workspace management. `N` cells give a $4N{+}4$ band system with
 */
 static inline int gle_colloc_alloc (GLECollocation *c, int N) {
   memset (c, 0, sizeof *c);
+  if (N < 2 || N > (INT_MAX - 4)/4)
+    return 1;
   c->N = N;
   c->tau = (double *) malloc ((N + 1)*sizeof (double));
   c->y = (double *) malloc (4*(N + 1)*sizeof (double));
@@ -239,13 +252,23 @@ static inline int gle_colloc_alloc (GLECollocation *c, int N) {
   c->colCa = (double *) malloc ((4*N + 4)*sizeof (double));
   c->colS = (double *) malloc ((4*N + 4)*sizeof (double));
   c->ytmp = (double *) malloc (4*(N + 1)*sizeof (double));
-  if (!c->tau || !c->y || !c->res || !c->colCa || !c->colS || !c->ytmp)
+  if (!c->tau || !c->y || !c->res || !c->colCa || !c->colS || !c->ytmp) {
+    free (c->tau); free (c->y); free (c->res);
+    free (c->colCa); free (c->colS); free (c->ytmp);
+    memset (c, 0, sizeof *c);
     return 1;
+  }
   for (int i = 0; i <= N; i++)
     c->tau[i] = (double) i/N;
   c->tau_split = 0.45;
   c->s_split = 0.3;
-  return gle_band_alloc (&c->band, 4*N + 4, 7, 7);
+  if (gle_band_alloc (&c->band, 4*N + 4, 7, 7)) {
+    free (c->tau); free (c->y); free (c->res);
+    free (c->colCa); free (c->colS); free (c->ytmp);
+    memset (c, 0, sizeof *c);
+    return 1;
+  }
+  return 0;
 }
 
 static inline void gle_colloc_free (GLECollocation *c) {
@@ -621,11 +644,18 @@ static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
 				    int max_points, FILE *csv,
 				    double *fold_Ca, double *fold_Delta,
 				    int verbose) {
+  if (!c || !p || c->N < 2 || c->N > (INT_MAX - 4)/4 ||
+      !isfinite (Delta_max) || Delta_max <= 0.0 ||
+      !isfinite (dDelta0) || dDelta0 <= 0.0 ||
+      !isfinite (dDelta_cap) || dDelta_cap <= 0.0 ||
+      dDelta0 > dDelta_cap || max_points <= 0 ||
+      !isfinite (p->grav) || p->grav <= 0.0)
+    return 0;
   int N = c->N, n = 4*N + 4;
   int npts = 0;
   double dD = dDelta0;
   const double dD_min = 1.0e-7;
-  const double dD_max = (dDelta_cap > 0.0 ? dDelta_cap : 0.05);
+  const double dD_max = dDelta_cap;
 
   double *y_good = (double *) malloc (n*sizeof (double));
   double *y_prev = (double *) malloc (n*sizeof (double));
@@ -721,7 +751,7 @@ static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
 	       npts, c->Ca, c->Delta, dD, iters);
 
     if (iters <= 5 && dD < dD_max)
-      dD *= 1.4;
+      dD = fmin (1.4*dD, dD_max);
   }
 
   /* fold refinement: quadratic vertex of Ca(Delta) around the history

@@ -137,15 +137,20 @@ becomes the first-order system
   \frac{\dd h}{\dd s} = \sin\theta, \qquad
   \frac{\dd\theta}{\dd s} = \omega, \qquad
   \frac{\dd\omega}{\dd s}
-    = \frac{3\,\Ca\,M(\theta,\mur)}{h\,(h + 3\lambda)} + G(\theta), \qquad
+    = \frac{3\,\Ca\,M(\theta,\mur)}
+           {h\,(h + c_{\lambda}\lambda)} + G(\theta), \qquad
   \frac{\dd\zeta}{\dd s} = \cos\theta.
   \label{eq:arclength}
 \end{equation}
-The denominator $h(h+3\lambda)$ is the Navier-slip regularisation of the bare
-$h^{2}$: it removes the contact-line singularity of the viscous term while
-recovering $h^{2}$ for $h \gg \lambda$. In the one-fluid, small-angle limit the
-third equation reduces to $h''' = 3\,\Ca/h^{2}$ with $h^{2}\to h(h+3\lambda)$,
-the classical slip-regularised lubrication equation.
+The denominator $h(h+c_{\lambda}\lambda)$ is the Navier-slip regularisation of
+the bare $h^{2}$: it removes the contact-line singularity of the viscous term
+while recovering $h^{2}$ for $h \gg \lambda$. The cutoff coefficient
+$c_{\lambda}=c(\theta_e,\mur)$ follows from Cox--Voinov matching with
+slip~\cite{chan2020}. The value $c_{\lambda}=3$ is the classical one-fluid,
+small-angle convention, not a universal constant. The implementation accepts
+an explicit coefficient for arbitrary $(\theta_e,\mur)$ and includes the
+closed-form right-angle result; a general-angle evaluator would additionally
+require solving Hocking's integral equation and is deliberately not guessed.
 
 \subsection{The two-fluid Huh--Scriven mobility}
 
@@ -390,21 +395,23 @@ parameterisation continuation~\cite{rheinboldt1980}.
 
 \subsection{Parameters and calibration for Fig.~4b}
 
-The dip-coating problem has two microscopic inputs, the equilibrium angle
-$\theta_e$ and the slip length $\lambda$. Both are calibrated against the
-vector-digitised theory curve of Fig.~4b of Snoeijer \&
+The Fig.~4b reproduction has two fitted microscopic inputs, the equilibrium
+angle $\theta_e$ and an effective slip parameter $\lambda$, with the legacy
+cutoff convention fixed explicitly at $c_{\lambda}=3$. They are calibrated
+against the vector-digitised theory curve of Fig.~4b of Snoeijer \&
 Andreotti~\cite{snoeijer2013}, not measured independently:
 \begin{itemize}
   \item $\theta_e = 53.46^{\circ}$, fixed by the static foot
     $\Delta(\Ca \to 0) = \sqrt{2(1 - \sin\theta_e)} = 0.627$;
   \item $\lambda/\lgamma = 7.46\times10^{-6}$, fixed by the digitised fold
     $\Ca^{*} = 10.54\times10^{-3}$. The prediction is only logarithmically
-    sensitive to $\lambda$, so this value absorbs the $\mathcal{O}(1)$
-    microscopic-cutoff choices; it corresponds to about $11$~nm for silicone
-    oil at $\lgamma \approx 1.5$~mm.
+    sensitive to $\lambda$, so the fold calibration absorbs the chosen
+    $c_{\lambda}=3$ cutoff convention into this fitted value. It must not be
+    read as an independently measured physical Navier length.
 \end{itemize}
-Because $\lambda$ is calibrated \emph{to} $\Ca^{*}$, recovering $\Ca^{*}$ from
-the traced branch is circular by construction and is not a test. The genuine
+Because the microscopic cutoff is calibrated \emph{to} $\Ca^{*}$, recovering
+$\Ca^{*}$ from the traced branch is circular by construction and is not a
+test. The genuine
 out-of-sample checks are the fold height $\Delta^{*} = 1.440$ (digitised
 $1.446$, not fit to) and the full branch shape, including the upper-branch
 approach to the Landau--Levich asymptote, which carries no further free
@@ -424,6 +431,16 @@ machine precision across $\theta \in (0,\pi)$ and $\mur \in [0,1]$. Below
 $\theta = 0.02$ the C series form is in fact \emph{more} accurate than the
 direct trigonometric formula, which loses precision to the cancellation in
 $f_1$ and $f_2$.
+
+\paragraph{Slip cutoff.}
+The right-angle matching helper reproduces the analytic one-fluid value
+\[
+  c(\pi/2,0)=\exp(\ln 2-\gamma_E)=1.1229189671.
+\]
+It also gives the finite-viscosity-ratio values $c(\pi/2,1)=2.05$ and
+$c(\pi/2,10)=6.40$ reported by Chan \emph{et al.}~\cite{chan2020}. Values away
+from $\theta_e=\pi/2$ remain an explicit input rather than an undocumented
+approximation.
 
 \paragraph{Interface profile.}
 Against the historical SciPy \texttt{solve\_bvp} reference solving the
@@ -526,39 +543,33 @@ $\Delta$ up to the macroscopic scale. The coupling is a per-time-step event
 that exchanges one scalar in each direction at the grid scale. Each step
 (\texttt{event (i++)}):
 \begin{enumerate}
-  \item the DNS interface curvature $\kappa_{\mathrm{DNS}}$ is sampled near the
-    contact line at the grid scale;
+  \item the DNS interface position and curvature $\kappa_{\mathrm{DNS}}$ are
+    sampled in the finest interfacial cell nearest the plate, including an
+    interface aligned exactly with cell faces;
   \item the subgrid GLE is solved on $s \in [s_0, s_\Delta]$ with
     $h(s_\Delta) = \Delta$, the inner contact-line conditions, and the outer
-    condition $\omega(s_\Delta) = \kappa_{\mathrm{DNS}}$, by shooting on
-    $\omega_0$;
+    condition $\omega(s_\Delta) = -\kappa_{\mathrm{DNS}}$, by shooting on
+    $\omega_0$. The minus sign follows from $h=y$, $\zeta=-x$ and the phase
+    orientation used by Basilisk's \texttt{curvature()} in this case;
   \item the resulting apparent angle $\theta_{\mathrm{app}} = \theta(s_\Delta)$
     is imposed on the DNS through the height-function \texttt{contact\_angle()}
-    boundary condition.
+    boundary condition. The height vector is associated explicitly with the
+    VOF tracer, so Basilisk actually applies the dynamic angle.
 \end{enumerate}
 This is the multiscale strategy of the review~\cite{snoeijer2013} applied as a
 grid-scale boundary condition, in the spirit of the mesh-dependent dynamic
 contact angle of Afkhami, Zaleski \& Bussmann~\cite{afkhami2009}: the imposed
 angle is a property of the resolved scale, not a fixed material constant.
 
-The seam is implemented and runtime-verified. In the demonstration case a
-plate is withdrawn at $\Ca = 5\times10^{-3}$ from a bath with microscopic
-angle $60^{\circ}$; the imposed angle \texttt{theta\_gle} relaxes to about
-$55.9^{\circ}$ in response to the DNS curvature, confirming that the subgrid
-solver responds to the resolved interface as intended.
-
-Three problem-specific choices remain before production use, all documented in
-the source:
-\begin{itemize}
-  \item the signed capillary number should be built from the \emph{local}
-    contact-line speed (plate speed minus interface speed), not the fixed plate
-    speed used in the demonstration;
-  \item the sign convention of Basilisk's \texttt{curvature()} must be
-    reconciled with the GLE's $\dd\theta/\dd s > 0$ toward-the-bath convention
-    before the curvature is handed across;
-  \item the coupled system needs a grid-convergence study, the curvature
-    sample being currently taken in the interfacial cell nearest the plate.
-\end{itemize}
+The seam is implemented and exercised by a bounded Basilisk runtime regression.
+It starts from the exactly grid-aligned interface that previously evaded the
+strict volume-fraction filter, confirms refinement to the intended local grid
+size, and checks that the GLE updates the associated contact angle. During a
+normal run the capillary number is formed from the plate speed relative to the
+measured contact-line speed, the actual local cell size is passed to the GLE,
+and the dynamic angle is stored in a dumped scalar for restart. A
+grid-convergence study of the coupled curvature and contact-line-position
+samples remains the problem-specific production qualification.
 A closed-form flux theory such as that of Luo \& Gao~\cite{luo2025} offers a
 further out-of-sample target for the coupled model. The linearised GLE has
 separately been checked against the reference data of Kansal \emph{et
@@ -600,6 +611,11 @@ J.~Fluid Mech. \textbf{604}, 55--75 (2008).
 T.~S. Chan, J.~H. Snoeijer and J.~Eggers,
 \emph{Theory of the forced wetting transition},
 Phys. Fluids \textbf{24}, 072104 (2012).
+
+\bibitem{chan2020}
+T.~S. Chan, C.~Kamal, J.~H. Snoeijer, J.~E. Sprittles and J.~Eggers,
+\emph{Cox--Voinov theory with slip},
+J.~Fluid Mech. \textbf{900}, A8 (2020).
 
 \bibitem{snoeijer2013}
 J.~H. Snoeijer and B.~Andreotti,

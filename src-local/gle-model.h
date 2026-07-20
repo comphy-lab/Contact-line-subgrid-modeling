@@ -14,7 +14,8 @@ $$
 \frac{\mathrm{d}h}{\mathrm{d}s} = \sin\theta, \qquad
 \frac{\mathrm{d}\theta}{\mathrm{d}s} = \omega, \qquad
 \frac{\mathrm{d}\omega}{\mathrm{d}s} =
-   \frac{3\,\mathrm{Ca}\; M(\theta,\mu_r)}{h\,(h+3\lambda)} + G(\theta), \qquad
+   \frac{3\,\mathrm{Ca}\; M(\theta,\mu_r)}
+        {h\,(h+c_{\lambda}\lambda)} + G(\theta), \qquad
 \frac{\mathrm{d}\zeta}{\mathrm{d}s} = \cos\theta .
 $$
 
@@ -97,6 +98,10 @@ All physical and numerical parameters of a GLE boundary-value problem.
 - `Ca`: capillary number ($>0$ receding, $<0$ advancing).
 - `mu_r`: gas/liquid viscosity ratio $\mu_r$ ($0$ = one-fluid limit).
 - `slip`: Navier slip length $\lambda$ (in the working length unit).
+- `c_slip`: dimensionless microscopic cutoff coefficient $c_{\lambda}$.
+  The default value $3$ preserves the classical small-angle, one-fluid
+  convention.  At finite equilibrium angle or viscosity ratio it must be
+  supplied from the corresponding Cox--Voinov matching calculation.
 - `theta_mic`: microscopic contact angle $\theta_e$ imposed at the inner
   boundary (radians).
 - `grav`: gravity prefactor $g^{*}$ ($1$ in capillary-length units, $0$ off).
@@ -125,6 +130,7 @@ typedef struct {
   double Ca;
   double mu_r;
   double slip;
+  double c_slip;
   double theta_mic;
   double grav;
   int geometry;
@@ -151,6 +157,7 @@ static inline GLEParams gle_default_params (void) {
   p.Ca = 1.0e-3;
   p.mu_r = 0.0;
   p.slip = 1.0e-6;
+  p.c_slip = 3.0;     /* legacy small-angle, one-fluid cutoff convention */
   p.theta_mic = 51.5*M_PI/180.0;
   p.grav = 1.0;
   p.geometry = GLE_PLATE_VERTICAL;
@@ -270,6 +277,37 @@ static inline double gle_mobility (double th, double mu_r) {
 }
 
 /**
+### gle_slip_prefactor_right_angle()
+
+Returns the closed-form microscopic cutoff coefficient
+$c(\theta_e=\pi/2,\mu_r)$ from Eqs. (2.14)--(2.16) of
+[Chan et al. (2020)](https://doi.org/10.1017/jfm.2020.499).  Hocking's two
+right-angle constants are combined with this file's mobility using
+$F(\pi/2,\mu_r)=-M(\pi/2,\mu_r)$.  At zero viscosity ratio this gives
+$c=\exp(\ln 2-\gamma_E)\simeq1.12$; as $\mu_r\to\infty$, $c\to12.60$.
+
+This helper is deliberately restricted to a right angle.  For arbitrary
+`theta_mic` and `mu_r`, the matching constants must be calculated
+separately and the result supplied through `GLEParams.c_slip`.
+
+#### Returns
+The positive finite cutoff coefficient, or `NAN` for an invalid viscosity
+ratio.
+*/
+static inline double gle_slip_prefactor_right_angle (double mu_r) {
+  if (!isfinite (mu_r) || mu_r < 0.0)
+    return NAN;
+  const double gamma_E = 0.57721566490153286061;
+  const double h_a = 4.0/M_PI*(gamma_E - log (2.0));
+  const double h_b = -1.539;
+  double h1 = ((1.0 - mu_r)*h_a + 2.0*mu_r*h_b)/(1.0 + mu_r);
+  double h2 = (-(1.0 - mu_r)*h_a + 2.0*mu_r*h_b)/(1.0 + mu_r);
+  double F = -gle_mobility (0.5*M_PI, mu_r);
+  double c = exp ((h1 + mu_r*h2)/(3.0*F));
+  return (isfinite (c) && c > 0.0 ? c : NAN);
+}
+
+/**
 ### gle_rhs()
 
 Right-hand side of the GLE system. Writes
@@ -290,7 +328,7 @@ static inline int gle_rhs (const GLEParams *p, const double y[4],
   if (hf <= 0.0 || th <= -0.5*M_PI || th >= M_PI)
     return 1;
   double mob = gle_mobility (th, p->mu_r);
-  double visc = 3.0*p->Ca*mob/(hf*(hf + 3.0*p->slip));
+  double visc = 3.0*p->Ca*mob/(hf*(hf + p->c_slip*p->slip));
   double gravity = (p->geometry == GLE_PLATE_VERTICAL ?
 		    -p->grav*cos (th) : p->grav*sin (th));
   dyds[0] = sin (th);

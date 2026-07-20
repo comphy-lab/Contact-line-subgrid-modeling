@@ -22,6 +22,9 @@ Last updated: Jul 20, 2026
 #ifndef GLE_PARAMS_H
 #define GLE_PARAMS_H
 
+#include <errno.h>
+#include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,15 +34,29 @@ Last updated: Jul 20, 2026
 /**
 ### gle_bad_numeric()
 
-Reports a value that failed to parse as a number, and returns `1` so the
-caller treats the key as *recognised but ignored* rather than unknown (an
-unparsable value should not also trigger a spurious "unknown key" warning).
-The assignment is skipped: `gle_kv_apply()`'s caller simply keeps whatever
-default or earlier value the field already held.
+Reports a value that failed to parse as a number.  A malformed recognised
+value is fatal to the driver's parameter-loading pass: silently retaining a
+default makes a mistyped physical parameter particularly difficult to spot.
 */
 static int gle_bad_numeric (const char *val, const char *key) {
   fprintf (stderr, "gle-params: bad numeric value '%s' for key '%s'\n",
 	   val, key);
+  return -1;
+}
+
+/**
+### gle_parse_double()
+
+Strict finite floating-point parse.  The entire string must be consumed;
+overflow, underflow, `nan`, and `inf` are rejected.
+*/
+static int gle_parse_double (const char *val, double *out) {
+  char *endp;
+  errno = 0;
+  double v = strtod (val, &endp);
+  if (endp == val || *endp != '\0' || errno == ERANGE || !isfinite (v))
+    return 0;
+  *out = v;
   return 1;
 }
 
@@ -54,8 +71,9 @@ whole string must be consumed, and at least one digit must have been read).
 */
 static int gle_parse_long (const char *val, long *out) {
   char *endp;
+  errno = 0;
   long v = strtol (val, &endp, 10);
-  if (endp == val || *endp != '\0')
+  if (endp == val || *endp != '\0' || errno == ERANGE)
     return 0;
   *out = v;
   return 1;
@@ -66,19 +84,16 @@ static int gle_parse_long (const char *val, long *out) {
 
 Applies one `key=value` pair to the parameter structs. Unknown keys warn on
 `stderr` (they do not abort: parameter files may be shared between drivers).
-Numeric values are parsed with `strtod()`/`strtol()` and checked against
-`endptr`; a value that does not fully parse (e.g. `Ca=abc`) is reported via
-`gle_bad_numeric()` and the assignment is skipped, but the key still counts
-as recognised (see `gle_bad_numeric()`).
+Numeric values are parsed with `gle_parse_double()`/`gle_parse_long()`.
 
 #### Returns
-`1` if the key was recognised, `0` otherwise.
+`1` if the key was recognised and applied, `0` if it is unknown, `-1` if a
+recognised value is malformed.
 */
 static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
 			 const char *val) {
-  char *endp;
-  double x = strtod (val, &endp);
-  int x_ok = (endp != val && *endp == '\0');
+  double x = 0.0;
+  int x_ok = gle_parse_double (val, &x);
 #define GLE_KEY(name, target)						\
   if (!strcmp (key, name)) {						\
     if (!x_ok) return gle_bad_numeric (val, key);			\
@@ -88,6 +103,7 @@ static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
   GLE_KEY ("Ca", p->Ca);
   GLE_KEY ("mu_r", p->mu_r);
   GLE_KEY ("slip", p->slip);
+  GLE_KEY ("c_slip", p->c_slip);
   GLE_KEY ("grav", p->grav);
   GLE_KEY ("s0", p->s0);
   GLE_KEY ("h0", p->h0);
@@ -105,13 +121,19 @@ static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
   if (!strcmp (key, "geometry")) {
     if (!strcmp (val, "vertical")) p->geometry = GLE_PLATE_VERTICAL;
     else if (!strcmp (val, "horizontal")) p->geometry = GLE_PLATE_HORIZONTAL;
-    else fprintf (stderr, "gle-params: unknown geometry '%s'\n", val);
+    else {
+      fprintf (stderr, "gle-params: unknown geometry '%s'\n", val);
+      return -1;
+    }
     return 1;
   }
   if (!strcmp (key, "outer_bc")) {
     if (!strcmp (val, "manifold")) p->outer_bc = GLE_OUTER_STATIC_MENISCUS;
     else if (!strcmp (val, "omega_zero")) p->outer_bc = GLE_OUTER_OMEGA_ZERO;
-    else fprintf (stderr, "gle-params: unknown outer_bc '%s'\n", val);
+    else {
+      fprintf (stderr, "gle-params: unknown outer_bc '%s'\n", val);
+      return -1;
+    }
     return 1;
   }
   if (!strcmp (key, "max_steps")) {
@@ -121,35 +143,138 @@ static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
     p->max_steps = v;
     return 1;
   }
-  if (o) {
-#define GLE_KEY_O(name, target)					\
-    if (!strcmp (key, name)) {						\
-      if (!x_ok) return gle_bad_numeric (val, key);			\
-      target = x;							\
-      return 1;								\
-    }
-    GLE_KEY_O ("Ca_start", o->Ca_start);
-    GLE_KEY_O ("alpha0", o->alpha0);
-    GLE_KEY_O ("alpha_min", o->alpha_min);
-    GLE_KEY_O ("alpha_max", o->alpha_max);
-    GLE_KEY_O ("Delta_max", o->Delta_max);
-    GLE_KEY_O ("Ca_stop_min", o->Ca_stop_min);
-#undef GLE_KEY_O
-    if (!strcmp (key, "max_points")) {
-      long v;
-      if (!gle_parse_long (val, &v))
-	return gle_bad_numeric (val, key);
-      o->max_points = (int) v;
-      return 1;
-    }
-    if (!strcmp (key, "verbose")) {
-      long v;
-      if (!gle_parse_long (val, &v))
-	return gle_bad_numeric (val, key);
-      o->verbose = (int) v;
-      return 1;
-    }
+  /* Continuation-only keys remain recognised when `o == NULL`, allowing a
+     shared parameter file to be passed to the single-solve driver quietly. */
+#define GLE_KEY_O(name, field)						\
+  if (!strcmp (key, name)) {						\
+    if (!x_ok) return gle_bad_numeric (val, key);			\
+    if (o) o->field = x;						\
+    return 1;								\
   }
+  GLE_KEY_O ("Ca_start", Ca_start);
+  GLE_KEY_O ("alpha0", alpha0);
+  GLE_KEY_O ("alpha_min", alpha_min);
+  GLE_KEY_O ("alpha_max", alpha_max);
+  GLE_KEY_O ("Delta_max", Delta_max);
+  GLE_KEY_O ("Ca_stop_min", Ca_stop_min);
+#undef GLE_KEY_O
+  if (!strcmp (key, "max_points")) {
+    long v;
+    if (!gle_parse_long (val, &v))
+      return gle_bad_numeric (val, key);
+    if (v < INT_MIN || v > INT_MAX) {
+      fprintf (stderr, "gle-params: integer value '%s' is out of range for key '%s'\n",
+	       val, key);
+      return -1;
+    }
+    if (o)
+      o->max_points = (int) v;
+    return 1;
+  }
+  if (!strcmp (key, "verbose")) {
+    long v;
+    if (!gle_parse_long (val, &v))
+      return gle_bad_numeric (val, key);
+    if (v < INT_MIN || v > INT_MAX) {
+      fprintf (stderr, "gle-params: integer value '%s' is out of range for key '%s'\n",
+	       val, key);
+      return -1;
+    }
+    if (o)
+      o->verbose = (int) v;
+    return 1;
+  }
+  return 0;
+}
+
+/**
+### gle_params_validate()
+
+Validates the shared physical and integrator parameters before a driver
+allocates workspaces or starts a solve. Non-positive `s0` and `h0` retain
+their documented "derive from slip and wedge" meaning; their resolved values
+are checked here.
+
+#### Returns
+`0` when the parameter set is usable, `1` after writing a diagnostic to
+`stderr` otherwise.
+*/
+static inline int gle_params_validate (const GLEParams *p,
+				       const char *driver) {
+#define GLE_REQUIRE(cond, message)                                      \
+  do {                                                                  \
+    if (!(cond)) {                                                      \
+      fprintf (stderr, "%s: invalid parameters: %s\n", driver, message); \
+      return 1;                                                         \
+    }                                                                   \
+  } while (0)
+  GLE_REQUIRE (isfinite (p->Ca), "Ca must be finite");
+  GLE_REQUIRE (isfinite (p->mu_r) && p->mu_r >= 0.0,
+	       "mu_r must be finite and non-negative");
+  GLE_REQUIRE (isfinite (p->slip) && p->slip > 0.0,
+	       "slip must be finite and positive");
+  GLE_REQUIRE (isfinite (p->c_slip) && p->c_slip > 0.0,
+	       "c_slip must be finite and positive");
+  GLE_REQUIRE (isfinite (p->theta_mic) && p->theta_mic > 0.0 &&
+	       p->theta_mic < M_PI,
+	       "theta_mic_deg must lie strictly between 0 and 180");
+  GLE_REQUIRE (isfinite (p->grav) && p->grav >= 0.0,
+	       "grav must be finite and non-negative");
+  GLE_REQUIRE (p->geometry == GLE_PLATE_VERTICAL ||
+	       p->geometry == GLE_PLATE_HORIZONTAL,
+	       "geometry selector is invalid");
+  GLE_REQUIRE (isfinite (p->s0) && isfinite (p->h0),
+	       "s0 and h0 must be finite");
+  GLE_REQUIRE (isfinite (gle_s0 (p)) && gle_s0 (p) > 0.0,
+	       "resolved s0 must be positive");
+  GLE_REQUIRE (isfinite (gle_h0 (p)) && gle_h0 (p) > 0.0,
+	       "resolved h0 must be positive");
+  GLE_REQUIRE (isfinite (p->H_match) && p->H_match > gle_h0 (p),
+	       "H_match must be finite and exceed the inner film thickness");
+  GLE_REQUIRE (isfinite (p->smax_cap) && p->smax_cap > gle_s0 (p),
+	       "smax_cap must be finite and exceed the starting arc length");
+  GLE_REQUIRE (p->outer_bc == GLE_OUTER_STATIC_MENISCUS ||
+	       p->outer_bc == GLE_OUTER_OMEGA_ZERO,
+	       "outer_bc selector is invalid");
+  GLE_REQUIRE (p->outer_bc != GLE_OUTER_STATIC_MENISCUS || p->grav > 0.0,
+	       "grav must be positive for static-meniscus matching");
+  GLE_REQUIRE (isfinite (p->rtol) && p->rtol > 0.0,
+	       "rtol must be finite and positive");
+  GLE_REQUIRE (isfinite (p->atol) && p->atol > 0.0,
+	       "atol must be finite and positive");
+  GLE_REQUIRE (p->max_steps > 0, "max_steps must be positive");
+#undef GLE_REQUIRE
+  return 0;
+}
+
+/**
+### gle_cont_opts_validate()
+
+Validates the shooting-continuation controls loaded through the shared
+parameter layer.
+*/
+static inline int gle_cont_opts_validate (const GLEContOpts *o,
+					  const char *driver) {
+#define GLE_REQUIRE(cond, message)                                      \
+  do {                                                                  \
+    if (!(cond)) {                                                      \
+      fprintf (stderr, "%s: invalid parameters: %s\n", driver, message); \
+      return 1;                                                         \
+    }                                                                   \
+  } while (0)
+  GLE_REQUIRE (isfinite (o->Ca_start) && o->Ca_start > 0.0,
+	       "Ca_start must be finite and positive");
+  GLE_REQUIRE (isfinite (o->alpha_min) && o->alpha_min > 0.0 &&
+	       isfinite (o->alpha0) && o->alpha0 >= o->alpha_min &&
+	       isfinite (o->alpha_max) && o->alpha_max >= o->alpha0,
+	       "require 0 < alpha_min <= alpha0 <= alpha_max");
+  GLE_REQUIRE (o->max_points >= 3, "max_points must be at least 3");
+  GLE_REQUIRE (isfinite (o->Delta_max) && o->Delta_max > 0.0,
+	       "Delta_max must be finite and positive");
+  GLE_REQUIRE (isfinite (o->Ca_stop_min) && o->Ca_stop_min >= 0.0,
+	       "Ca_stop_min must be finite and non-negative");
+  GLE_REQUIRE (o->verbose >= 0, "verbose must be non-negative");
+#undef GLE_REQUIRE
   return 0;
 }
 
@@ -162,10 +287,15 @@ right. Only the first bare argument is treated as a parameter file path; any
 subsequent bare argument is reported to `stderr` as an ignored extra
 positional argument rather than being opened. `o` may be `NULL` for drivers
 without continuation options.
+
+#### Returns
+`0` on success, `1` if a recognised value is malformed. Unknown keys remain
+warnings so a parameter file can be shared between drivers.
 */
-static void gle_params_load (int argc, char *argv[], GLEParams *p,
-			     GLEContOpts *o) {
+static inline int gle_params_load (int argc, char *argv[], GLEParams *p,
+				   GLEContOpts *o) {
   int have_file = 0;
+  int bad = 0;
   for (int i = 1; i < argc; i++) {
     char *eq = strchr (argv[i], '=');
     if (!eq) {                        /* parameter file */
@@ -186,10 +316,14 @@ static void gle_params_load (int argc, char *argv[], GLEParams *p,
 	char *hash = strchr (line, '#');
 	if (hash) *hash = '\0';
 	char key[128], val[128];
-	if (sscanf (line, " %127[^= \t] = %127s", key, val) == 2)
-	  if (!gle_kv_apply (p, o, key, val))
+	if (sscanf (line, " %127[^= \t] = %127s", key, val) == 2) {
+	  int applied = gle_kv_apply (p, o, key, val);
+	  if (applied < 0)
+	    bad = 1;
+	  else if (!applied)
 	    fprintf (stderr, "gle-params: unknown key '%s' in %s\n",
 		     key, argv[i]);
+	}
       }
       fclose (fp);
     }
@@ -198,11 +332,15 @@ static void gle_params_load (int argc, char *argv[], GLEParams *p,
     char *eq = strchr (argv[i], '=');
     if (eq) {
       *eq = '\0';
-      if (!gle_kv_apply (p, o, argv[i], eq + 1))
+      int applied = gle_kv_apply (p, o, argv[i], eq + 1);
+      if (applied < 0)
+	bad = 1;
+      else if (!applied)
 	fprintf (stderr, "gle-params: unknown key '%s'\n", argv[i]);
       *eq = '=';
     }
   }
+  return bad;
 }
 
 #endif /* GLE_PARAMS_H */

@@ -100,6 +100,8 @@ int main(int argc, char const *argv[]) {
   G.x = -10*(t_c*t_c)/l_c;
 
   f.sigma = 1.0;
+  /* Associate the contact-angle height function with the VOF tracer. */
+  f.height = h;
 
   run();
 }

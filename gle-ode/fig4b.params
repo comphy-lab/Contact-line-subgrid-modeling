@@ -8,11 +8,12 @@
 # (data/fig4b-digitized/), not independently measured:
 #   theta_mic_deg = 53.46  fixed by the static foot Delta(Ca->0) =
 #                          sqrt(2(1 - sin(theta_e))) = 0.627;
-#   slip = 7.46e-6         fixed by the digitized fold Ca* = 10.54e-3 (the
-#                          prediction is logarithmically sensitive to slip,
-#                          so this absorbs the O(1) microscopic-cutoff
-#                          choices; it corresponds to ~11 nm for silicone
-#                          oil, l_gamma ~ 1.5 mm).
+#   c_slip = 3             reproduces the legacy small-angle cutoff used by
+#                          the 2013 review curve;
+#   slip = 7.46e-6         fixed by the digitized fold Ca* = 10.54e-3. The fold
+#                          calibration therefore absorbs the c_slip convention
+#                          into this fitted value: it is not an independently
+#                          measured physical Navier length.
 #
 # Because slip is calibrated directly to Ca*, reproducing Ca* back out of
 # the traced branch is NOT a test -- it is circular by construction. The
@@ -25,6 +26,7 @@
 geometry = vertical
 theta_mic_deg = 53.46
 slip = 7.46e-6
+c_slip = 3.0
 mu_r = 0.0
 grav = 1.0
 

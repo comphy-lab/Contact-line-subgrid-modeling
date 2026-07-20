@@ -19,7 +19,7 @@ $$
 \\frac{\\mathrm{d}h}{\\mathrm{d}s} = \\sin\\theta, \\qquad
 \\frac{\\mathrm{d}\\theta}{\\mathrm{d}s} = \\omega, \\qquad
 \\frac{\\mathrm{d}\\omega}{\\mathrm{d}s}
-   = \\frac{3\\,\\mathrm{Ca}\\,M(\\theta,\\mu_r)}{h\\,(h + 3\\lambda)}
+   = \\frac{3\\,\\mathrm{Ca}\\,M(\\theta,\\mu_r)}{h\\,(h + c\\lambda)}
      - \\frac{\\cos\\theta}{\\ell_{\\mathrm{cap}}^{2}},
 $$
 
@@ -155,6 +155,7 @@ def run_c(repo: Path, gle):
             f"slip={gle.lambda_slip:g}", "s0=1", "h0=1",
             f"grav={grav:.12e}", f"theta_mic_deg={theta_deg:g}",
             f"Ca={gle.Ca:g}", f"mu_r={gle.mu_r:g}",
+            f"c_slip={gle.c_slip:g}",
             "outer_bc=omega_zero", f"smax_cap={gle.l_cap:g}",
             "rtol=1e-12", "atol=1e-14", f"profile_out={profile}",
         ]

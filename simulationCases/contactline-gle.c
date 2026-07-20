@@ -22,14 +22,10 @@ carries the viscous bending from $\lambda$ (~nm) to $\Delta$, and the DNS
 carries it from $\Delta$ to the macroscopic scale — the division of labour
 of Snoeijer & Andreotti, *Annu. Rev. Fluid Mech.* 45 (2013).
 
-## Scope
-
-This case is the **integration seam demonstration**, superseding the static
-contact angle of [contactline.c](contactline.c). Production use requires
-two problem-specific choices documented in the README roadmap: the signed
-capillary number should be built from the *local* contact-line speed
-(plate speed minus interface speed), and the curvature sample should be
-grid-converged (here: the interfacial cell nearest the contact line).
+The coupling uses the local relative speed of the plate and contact line.
+The curvature and interface position are sampled in the finest interfacial
+cell nearest the plate. Grid convergence of that sample remains a
+problem-specific production requirement.
 
 ## Author
 Vatsal Sanjay
@@ -100,9 +96,51 @@ double theta_gle;
 vector hei[];
 hei.t[bottom] = contact_angle (theta_gle);
 
+/**
+`gle_theta_state` is a spatially constant dumped scalar. Basilisk snapshots
+store fields rather than arbitrary C globals, so this preserves the dynamic
+contact angle across restart. The contact-line velocity history is rebuilt
+from the first post-restart sample; that first sample safely falls back to
+the plate capillary number.
+*/
+scalar gle_theta_state[];
+static double gle_previous_x = 0., gle_previous_t = 0.;
+static bool gle_have_previous = false;
+static unsigned long gle_missing_samples = 0;
+static double gle_last_Delta = nodata;
+
+#if GLE_TEST_MODE
+static bool gle_test_candidate_found = false;
+static bool gle_test_angle_changed = false;
+#endif
+
+static void gle_store_theta_state (void) {
+  foreach()
+    gle_theta_state[] = theta_gle;
+  boundary ({gle_theta_state});
+}
+
+static void gle_restore_theta_state (void) {
+  double restored_theta = -HUGE;
+  foreach (reduction(max:restored_theta))
+    if (isfinite (gle_theta_state[]) && gle_theta_state[] > 0. &&
+	gle_theta_state[] < pi)
+      restored_theta = max (restored_theta, gle_theta_state[]);
+  if (restored_theta > 0.)
+    theta_gle = restored_theta;
+  else if (pid() == 0)
+    fprintf (ferr, "warning: restart has no valid GLE angle; using theta_mic\n");
+  gle_have_previous = false;
+}
+
 int main() {
+#if GLE_TEST_MODE
+  tmax = 1e-3;
+  MAXlevel = 5;
+#else
   tmax = 1e2;
   MAXlevel = 10;
+#endif
   mu_r = 2e-2;
   rho_r = 1e-3;
   Ca = 5e-3;
@@ -113,7 +151,9 @@ int main() {
   lr = 1;
 
   /* GLE microscopic parameters (DNS length units) */
-  theta_mic = 60.0*pi/180.0;
+  /* Chan et al.'s two-fluid matching coefficient is available in closed
+     form at a right angle, so the demonstration uses that documented case. */
+  theta_mic = 0.5*pi;
   theta_gle = theta_mic;
 
   Ldomain = lr > 1 ? 32 : 32*lr;
@@ -127,9 +167,11 @@ int main() {
   X0 = -hf; Y0 = 0.;
   init_grid (1 << MINlevel);
 
+#if !GLE_TEST_MODE
   char comm[80];
   sprintf (comm, "mkdir -p intermediate");
   system(comm);
+#endif
 
   rho1 = 1e0; mu1 = 1e0;
   rho2 = rho1*rho_r; mu2 = mu1*mu_r;
@@ -137,14 +179,30 @@ int main() {
   G.x = -10*(t_c*t_c)/l_c;
   f.sigma = 1.0;
 
+  /* contact.h only refreshes height vectors associated with the VOF field. */
+  f.height = hei;
+#if GLE_TEST_MODE
+  assert (f.height.x.i == hei.x.i && f.height.y.i == hei.y.i);
+#endif
+
   run();
 }
 
 event init(t = 0){
-  if(!restore (file = "restart")) {
-    refine(((x < 1e-1 && x > -1e-1) || (y < 1e-1)) && level < MAXlevel);
+  bool restored = false;
+#if !GLE_TEST_MODE
+  restored = restore (file = "restart");
+#endif
+  if (!restored) {
+    /* `refine()` repeats until the condition is false. Scaling the strip
+       with the current `Delta` therefore reaches `MAXlevel` from the coarse
+       startup mesh while retaining only a narrow interface/wall band. */
+    refine ((fabs (x) <= 2.*Delta || y <= 2.*Delta) && level < MAXlevel);
     fraction (f, -x);
+    gle_store_theta_state ();
   }
+  else
+    gle_restore_theta_state ();
 }
 
 /**
@@ -157,41 +215,93 @@ parameters (beyond the entrainment transition), the previous angle is kept
 — the DNS then resolves the ensuing film dynamics itself.
 */
 scalar KAPPA[];
+scalar CLPOS[];
 event gle_boundary (i++) {
   curvature (f, KAPPA);
-  /* Two passes keep the min-y selection and its curvature consistent
-     under parallel reductions: ties at equal y resolve deterministically
-     to the largest curvature. */
+  position (f, CLPOS, (coord){1., 0.});
+
+  /* Lexicographic reductions select the candidate deterministically under
+     OpenMP/MPI: nearest wall, finest local cell, then smallest interface x.
+     `interfacial()` includes exactly grid-aligned VOF interfaces. */
   double ycl = HUGE;
   foreach (reduction(min:ycl))
-    if (f[] > 0.1 && f[] < 0.9 && KAPPA[] != nodata && y < ycl)
+    if (interfacial (point, f) && KAPPA[] != nodata && CLPOS[] != nodata &&
+	y < ycl)
       ycl = y;
-  double kappa_cl = -HUGE;
+
+  double Delta_cl = HUGE;
   if (ycl < HUGE)
+    foreach (reduction(min:Delta_cl))
+      if (interfacial (point, f) && KAPPA[] != nodata && CLPOS[] != nodata &&
+	  y == ycl && Delta < Delta_cl)
+	Delta_cl = Delta;
+
+  double xcl = HUGE;
+  if (Delta_cl < HUGE)
+    foreach (reduction(min:xcl))
+      if (interfacial (point, f) && KAPPA[] != nodata && CLPOS[] != nodata &&
+	  y == ycl && Delta == Delta_cl && CLPOS[] < xcl)
+	xcl = CLPOS[];
+
+  double kappa_cl = -HUGE;
+  if (xcl < HUGE)
     foreach (reduction(max:kappa_cl))
-      if (f[] > 0.1 && f[] < 0.9 && KAPPA[] != nodata && y == ycl &&
+      if (interfacial (point, f) && KAPPA[] != nodata && CLPOS[] != nodata &&
+	  y == ycl && Delta == Delta_cl && CLPOS[] == xcl &&
 	  KAPPA[] > kappa_cl)
 	kappa_cl = KAPPA[];
-  if (ycl < HUGE && kappa_cl > -HUGE) {
+
+  if (xcl < HUGE && kappa_cl > -HUGE) {
+    gle_missing_samples = 0;
+    gle_last_Delta = Delta_cl;
+#if GLE_TEST_MODE
+    gle_test_candidate_found = true;
+#endif
+
+    double Ca_local = Ca;
+    if (gle_have_previous && t > gle_previous_t) {
+      double contact_line_speed = (xcl - gle_previous_x)/(t - gle_previous_t);
+      Ca_local = Ca - contact_line_speed;
+    }
+    gle_previous_x = xcl;
+    gle_previous_t = t;
+    gle_have_previous = true;
+
     GLEParams gp = gle_default_params ();
-    gp.Ca = Ca;                    /* receding plate: Ca > 0 */
+    gp.Ca = Ca_local;              /* plate speed minus line speed */
     gp.mu_r = mu_r;                /* DNS gas/liquid viscosity ratio */
     gp.slip = lambda_slip;
+    gp.c_slip = gle_slip_prefactor_right_angle (mu_r);
     gp.theta_mic = theta_mic;
     gp.grav = 0.0;                 /* negligible below the grid scale */
     gp.smax_cap = 10.0*Ldomain;
-    double Delta_grid = Ldomain/(1 << MAXlevel);
-    /* kappa handoff: kappa_cl (Basilisk's curvature(), sampled at the
-       interfacial cell nearest the plate) is passed straight through as
-       the GLE's outer curvature target. This assumes Basilisk's
-       curvature() sign convention matches the GLE's d(theta)/ds > 0
-       toward-the-bath convention -- production use must verify the sign,
-       and should build Ca from the LOCAL contact-line speed (plate speed
-       minus interface speed), not the fixed plate Ca used here. */
-    double th = gle_dns_apparent_angle (&gp, kappa_cl, Delta_grid,
+    /* Here h = y and the GLE arclength points from the contact line toward
+       the bath, opposite to Basilisk's normal orientation for `f = -x`.
+       Consequently omega_GLE = -kappa_Basilisk for this geometry. */
+    double omega_dns = -kappa_cl;
+#if GLE_TEST_MODE
+    double old_theta = theta_gle;
+#endif
+    double th = gle_dns_apparent_angle (&gp, omega_dns, Delta_cl,
 					theta_gle);
-    if (isfinite (th) && th > 0.01 && th < pi - 0.01)
+    if (isfinite (th) && th > 0.01 && th < pi - 0.01) {
       theta_gle = th;
+      gle_store_theta_state ();
+#if GLE_TEST_MODE
+      if (fabs (theta_gle - old_theta) > 1e-12)
+	gle_test_angle_changed = true;
+#endif
+    }
+  }
+  else {
+    gle_have_previous = false;
+    gle_missing_samples++;
+    if (pid() == 0 &&
+	(gle_missing_samples <= 3 || gle_missing_samples % 100 == 0))
+      fprintf (ferr,
+	       "warning: GLE coupling found no valid contact-line sample "
+	       "at i=%d t=%g (miss %lu)\n",
+	       i, t, gle_missing_samples);
   }
 }
 
@@ -204,7 +314,9 @@ event adapt(i++) {
 /**
 ## Outputs
 */
+#if !GLE_TEST_MODE
 event writingFiles (t = 0; t += tsnap; t <= tmax + tsnap) {
+  gle_store_theta_state ();
   dump (file = "restart");
   char nameOut[80];
   sprintf (nameOut, "intermediate/snapshot-%5.4f", t);
@@ -226,3 +338,20 @@ event logWriting (i++) {
   fclose(fp);
   fprintf (ferr, "%d %g %g %g %g\n", i, dt, t, ke, theta_gle*180.0/pi);
 }
+#else
+/**
+## Bounded coupling regression
+
+`GLE_TEST_MODE` runs only two iterations and performs no dumps. It checks the
+four seam contracts that a compile-only test misses.
+*/
+event gle_test_stop (i = 2) {
+  assert (f.height.x.i == hei.x.i && f.height.y.i == hei.y.i);
+  assert (gle_test_candidate_found);
+  assert (gle_last_Delta != nodata && gle_last_Delta > 0. &&
+	  gle_last_Delta < Ldomain/(1 << MINlevel));
+  assert (gle_test_angle_changed);
+  fprintf (ferr, "GLE_TEST_MODE: coupling regression passed\n");
+  return 1;
+}
+#endif

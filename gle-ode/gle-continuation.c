@@ -40,6 +40,7 @@ Last updated: Jul 20, 2026
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include "gle-params.h"
 #include "gle-collocate.h"
 
@@ -50,22 +51,43 @@ int main (int argc, char *argv[]) {
   int mesh_N = 2500;
   double dDelta0 = 2.0e-3;
   double dDelta_cap = 0.02;
+  int driver_bad = 0;
 
   for (int i = 1; i < argc; i++) {
     if (!strncmp (argv[i], "branch_out=", 11)) {
       out_path = argv[i] + 11;
+      if (!out_path[0]) {
+	fprintf (stderr, "gle-continuation: branch_out must not be empty\n");
+	driver_bad = 1;
+      }
       argv[i] = (char *) "";
     }
     else if (!strncmp (argv[i], "mesh_N=", 7)) {
-      mesh_N = atoi (argv[i] + 7);
+      long v;
+      if (!gle_parse_long (argv[i] + 7, &v) || v < 2 ||
+	  v > (INT_MAX - 4)/4) {
+	fprintf (stderr, "gle-continuation: mesh_N must be an integer in [2, %d]\n",
+		 (INT_MAX - 4)/4);
+	driver_bad = 1;
+      }
+      else
+	mesh_N = (int) v;
       argv[i] = (char *) "";
     }
     else if (!strncmp (argv[i], "dDelta=", 7)) {
-      dDelta0 = atof (argv[i] + 7);
+      if (!gle_parse_double (argv[i] + 7, &dDelta0) || dDelta0 <= 0.0) {
+	fprintf (stderr, "gle-continuation: dDelta must be finite and positive\n");
+	driver_bad = 1;
+      }
       argv[i] = (char *) "";
     }
     else if (!strncmp (argv[i], "dDelta_max=", 11)) {
-      dDelta_cap = atof (argv[i] + 11);
+      if (!gle_parse_double (argv[i] + 11, &dDelta_cap) ||
+	  dDelta_cap <= 0.0) {
+	fprintf (stderr,
+		 "gle-continuation: dDelta_max must be finite and positive\n");
+	driver_bad = 1;
+      }
       argv[i] = (char *) "";
     }
   }
@@ -74,12 +96,29 @@ int main (int argc, char *argv[]) {
     if (argv[i][0] != '\0')
       argv[ac++] = argv[i];
 
-  gle_params_load (ac, argv, &p, &opts);
+  if (gle_params_load (ac, argv, &p, &opts))
+    driver_bad = 1;
+  if (gle_params_validate (&p, "gle-continuation") ||
+      gle_cont_opts_validate (&opts, "gle-continuation"))
+    driver_bad = 1;
+  if (p.geometry != GLE_PLATE_VERTICAL ||
+      p.outer_bc != GLE_OUTER_STATIC_MENISCUS) {
+    fprintf (stderr, "gle-continuation: collocation requires geometry=vertical "
+	     "and outer_bc=manifold\n");
+    driver_bad = 1;
+  }
+  if (dDelta0 > dDelta_cap) {
+    fprintf (stderr, "gle-continuation: dDelta must not exceed dDelta_max\n");
+    driver_bad = 1;
+  }
+  if (driver_bad)
+    return 2;
 
   fprintf (stderr,
 	   "gle-continuation: theta_e = %g deg, slip = %.3e, mu_r = %g, "
-	   "H_match = %g, mesh_N = %d\n",
-	   p.theta_mic*180.0/M_PI, p.slip, p.mu_r, p.H_match, mesh_N);
+	   "c_slip = %g, H_match = %g, mesh_N = %d\n",
+	   p.theta_mic*180.0/M_PI, p.slip, p.mu_r, p.c_slip,
+	   p.H_match, mesh_N);
 
   /* --- seed: shooting solve on the quasi-static lower branch --- */
   GLESolution sol;
@@ -98,12 +137,14 @@ int main (int argc, char *argv[]) {
   }
   if (gle_colloc_seed_from_shoot (&c, &p, &sol)) {
     fprintf (stderr, "gle-continuation: mesh seeding failed\n");
+    gle_colloc_free (&c);
     return 1;
   }
 
   FILE *csv = fopen (out_path, "w");
   if (!csv) {
     fprintf (stderr, "gle-continuation: cannot write '%s'\n", out_path);
+    gle_colloc_free (&c);
     return 1;
   }
   gle_branch_csv_header (csv);

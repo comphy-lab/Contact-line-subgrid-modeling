@@ -229,13 +229,22 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
   double a = w_best, b = w_best;
   double Ra = gle_shoot_residual (p, a, NULL, NULL, NULL), Rb = Ra;
   double span = fmax (1.0e-6*fabs (w_best), 1.0e-6);
+  const double bracket_center = w_best;
   int bracketed = 0;
   for (int it = 0; it < 200 && !bracketed; it++) {
-    a = w_best - span;
-    b = w_best + span;
+    a = bracket_center - span;
+    b = bracket_center + span;
     Ra = gle_shoot_residual (p, a, NULL, NULL, NULL);
     Rb = gle_shoot_residual (p, b, NULL, NULL, NULL);
     iters += 2;
+    if (isfinite (Ra) && fabs (Ra) < R_best) {
+      w_best = a;
+      R_best = fabs (Ra);
+    }
+    if (isfinite (Rb) && fabs (Rb) < R_best) {
+      w_best = b;
+      R_best = fabs (Rb);
+    }
     if (isfinite (Ra) && isfinite (Rb) && Ra*Rb < 0.0)
       bracketed = 1;
     else
@@ -250,6 +259,10 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
     iters++;
     double m = 0.5*(a + b);
     double Rm = gle_shoot_residual (p, m, NULL, NULL, NULL);
+    if (isfinite (Rm) && fabs (Rm) < R_best) {
+      w_best = m;
+      R_best = fabs (Rm);
+    }
     if (Ra*Rm <= 0.0) {
       b = m; Rb = Rm;
     }
@@ -259,10 +272,13 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
     if (fabs (b - a) < 1.0e-14*fmax (fabs (a), 1.0) || fabs (Rm) < tolR)
       break;
   }
-  w = 0.5*(a + b);
+  /* Keep the lowest-residual point actually evaluated.  If bisection stops
+     because R(m) met tolR, the midpoint of the updated bracket is a new,
+     unevaluated point and can lie outside the selected tolerance. */
+  w = w_best;
   R = gle_shoot_residual (p, w, sol, NULL, NULL);
   sol->iters = iters;
-  sol->status = (fabs (R) < 1.0e-6 ? GLE_SHOOT_CONVERGED : GLE_SHOOT_FAIL);
+  sol->status = (fabs (R) < tolR ? GLE_SHOOT_CONVERGED : GLE_SHOOT_FAIL);
   return sol->status == GLE_SHOOT_CONVERGED ? 0 : 1;
 }
 
@@ -370,7 +386,7 @@ static int gle_solve_ca (GLEParams *p, double omega0, double Ca_guess,
   p->Ca = m;
   double R = gle_shoot_residual (p, omega0, sol, NULL, NULL);
   sol->iters = iters;
-  sol->status = (fabs (R) < 1.0e-6 ? GLE_SHOOT_CONVERGED : GLE_SHOOT_FAIL);
+  sol->status = (fabs (R) < tolR ? GLE_SHOOT_CONVERGED : GLE_SHOOT_FAIL);
   return sol->status == GLE_SHOOT_CONVERGED ? 0 : 1;
 }
 

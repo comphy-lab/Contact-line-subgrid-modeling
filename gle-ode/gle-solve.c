@@ -96,15 +96,23 @@ int main (int argc, char *argv[]) {
   GLEParams p = gle_default_params ();
   const char *out_path = "gle-profile.csv";
   double omega0_guess = 0.0;
+  int driver_bad = 0;
 
   /* driver-specific keys are peeled off before the shared loader runs */
   for (int i = 1; i < argc; i++) {
     if (!strncmp (argv[i], "profile_out=", 12)) {
       out_path = argv[i] + 12;
+      if (!out_path[0]) {
+	fprintf (stderr, "gle-solve: profile_out must not be empty\n");
+	driver_bad = 1;
+      }
       argv[i] = (char *) "";
     }
     else if (!strncmp (argv[i], "omega0_guess=", 13)) {
-      omega0_guess = atof (argv[i] + 13);
+      if (!gle_parse_double (argv[i] + 13, &omega0_guess)) {
+	fprintf (stderr, "gle-solve: omega0_guess must be finite\n");
+	driver_bad = 1;
+      }
       argv[i] = (char *) "";
     }
   }
@@ -114,7 +122,12 @@ int main (int argc, char *argv[]) {
     if (argv[i][0] != '\0')
       argv[ac++] = argv[i];
 
-  gle_params_load (ac, argv, &p, NULL);
+  if (gle_params_load (ac, argv, &p, NULL))
+    driver_bad = 1;
+  if (gle_params_validate (&p, "gle-solve"))
+    driver_bad = 1;
+  if (driver_bad)
+    return 2;
 
   if (omega0_guess == 0.0)
     omega0_guess = gle_static_curvature (p.theta_mic, p.grav);
@@ -131,10 +144,16 @@ int main (int argc, char *argv[]) {
   /* re-integrate the converged solution, recording the profile */
   profile_buf buf = { NULL, NULL, NULL, NULL, NULL, 0, 0 };
   gle_shoot_residual (&p, sol.omega0, &sol, profile_sampler, &buf);
+  if (buf.n < 1 || sol.status != GLE_SHOOT_CONVERGED) {
+    fprintf (stderr, "gle-solve: failed to capture converged profile\n");
+    free (buf.s); free (buf.hf); free (buf.th); free (buf.om); free (buf.zt);
+    return 1;
+  }
 
   FILE *fp = fopen (out_path, "w");
   if (!fp) {
     fprintf (stderr, "gle-solve: cannot write '%s'\n", out_path);
+    free (buf.s); free (buf.hf); free (buf.th); free (buf.om); free (buf.zt);
     return 1;
   }
   fprintf (fp, "s,h,theta_deg,omega,z\n");
@@ -147,6 +166,7 @@ int main (int argc, char *argv[]) {
   printf ("Ca            = %.10e\n", p.Ca);
   printf ("theta_mic     = %.6f deg\n", p.theta_mic*180.0/M_PI);
   printf ("slip          = %.3e\n", p.slip);
+  printf ("c_slip        = %.8g\n", p.c_slip);
   printf ("omega0        = %.12e\n", sol.omega0);
   printf ("Delta         = %.12e\n", sol.Delta);
   printf ("theta_app     = %.6f deg\n", sol.theta_app*180.0/M_PI);
@@ -154,5 +174,6 @@ int main (int argc, char *argv[]) {
   printf ("s_end         = %.6e\n", sol.s_end);
   printf ("residual      = %.3e\n", sol.residual);
   printf ("profile       -> %s (%ld points)\n", out_path, buf.n);
+  free (buf.s); free (buf.hf); free (buf.th); free (buf.om); free (buf.zt);
   return 0;
 }

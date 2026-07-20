@@ -33,12 +33,15 @@ $\theta_{\mathrm{app}} \to 0$ and $z_c \to \sqrt{2}\,\ell_\gamma$; beyond
 $\mathrm{Ca}^{*}$ no steady meniscus exists and a film is entrained. The
 saddle-node fold sits at
 $\mathrm{Ca}^{*} = 1.0544\times10^{-2}$ versus $1.054\times10^{-2}$ digitized.
-The slip length is calibrated *to the fold*, so recovering $\mathrm{Ca}^{*}$ is
-circular and is **not** a test. The genuine out-of-sample checks are the fold
+The microscopic cutoff is calibrated *to the fold* under the legacy
+$c_\lambda=3$ convention, so recovering $\mathrm{Ca}^{*}$ is circular and is
+**not** a test. The genuine out-of-sample checks are the fold
 height $\Delta^{*} = 1.440$ versus $1.446$ digitized (not fit to), and the full
 branch shape — including the upper-branch approach to the Landau–Levich
 asymptote — which carries no further free parameters. Microscopic parameters:
-$\theta_e = 53.46^{\circ}$, $\lambda/\ell_\gamma = 7.46\times10^{-6}$
+$\theta_e = 53.46^{\circ}$, $c_\lambda=3$, and
+$\lambda/\ell_\gamma = 7.46\times10^{-6}$. The fitted $\lambda$ absorbs this
+cutoff convention and is not an independently measured Navier slip length
 (the digitization provenance is in
 [data/fig4b-digitized/CALIBRATION.md](data/fig4b-digitized/CALIBRATION.md)).
 
@@ -57,20 +60,26 @@ $$
 \frac{\mathrm{d}h}{\mathrm{d}s} = \sin\theta, \qquad
 \frac{\mathrm{d}\theta}{\mathrm{d}s} = \omega, \qquad
 \frac{\mathrm{d}\omega}{\mathrm{d}s}
-   = \frac{3\,\mathrm{Ca}\;M(\theta,\mu_r)}{h\,(h + 3\lambda)} + G(\theta),
+   = \frac{3\,\mathrm{Ca}\;M(\theta,\mu_r)}
+           {h\,(h + c_\lambda\lambda)} + G(\theta),
 \qquad
 \frac{\mathrm{d}\zeta}{\mathrm{d}s} = \cos\theta .
 $$
 
 Here $h$ is the film thickness, $\theta$ the local interface inclination,
-$\omega$ the curvature, $\lambda$ the Navier slip length, and $G(\theta)$ the
-gravity term. Lengths are non-dimensionalised by the capillary length
+$\omega$ the curvature, $\lambda$ the Navier slip length,
+$c_\lambda=c(\theta_e,\mu_r)$ the finite-angle microscopic cutoff coefficient,
+and $G(\theta)$ the gravity term. The default $c_\lambda=3$ is the legacy
+small-angle, one-phase convention. The solver accepts a caller-supplied value
+for general $\theta_e$ and $\mu_r$, and provides the closed-form right-angle
+result of Chan *et al.* (2020); it does not treat $3$ as universal. Lengths are
+non-dimensionalised by the capillary length
 $\ell_\gamma = \sqrt{\gamma/\rho g}$. $\mathrm{Ca} = \eta U/\gamma > 0$ is a
 **receding** contact line (dip-coating: plate withdrawn from the bath);
 $\mathrm{Ca} < 0$ is advancing.
 
 The mobility $M(\theta,\mu_r)$ is the two-fluid Huh–Scriven wedge factor (Chan,
-Snoeijer & Eggers 2013),
+Snoeijer & Eggers 2012),
 
 $$
 M(\theta,\mu_r) = \frac{2\sin^3\theta\,\bigl[\mu_r^2 f_1(\theta)
@@ -149,7 +158,7 @@ right-hand sides agree to machine precision.
 
 ```bash
 make                 # build the standalone C solvers (any C99 compiler + libm)
-make test            # smoke test; also compiles the Basilisk case if qcc is present
+make test            # regressions; runs the bounded Basilisk seam test when qcc is present
 ./reproduce-fig4b.sh # trace the branch and regenerate img/fig4b-reproduction.png
 ```
 
@@ -227,20 +236,12 @@ Contact-line-subgrid-modeling
 The coupling seam is implemented and runtime-verified.
 [simulationCases/contactline-gle.c](simulationCases/contactline-gle.c) runs a
 per-step `event`: it samples the DNS interface curvature at the grid scale,
-solves the subgrid GLE with that curvature as its outer condition, and refreshes
-the height-function contact angle `theta_gle`, which is observed to respond to
-the DNS curvature during a run.
-
-Three items remain before production use, all documented in the source:
-
-- build the signed capillary number from the **local** contact-line speed
-  (plate speed minus interface speed), not the fixed plate speed used in the
-  demonstration;
-- reconcile the sign convention of Basilisk's `curvature()` with the GLE's
-  $\mathrm{d}\theta/\mathrm{d}s > 0$ toward-the-bath convention before the
-  curvature is handed across;
-- carry out a grid-convergence study of the coupled system (the curvature
-  sample is currently taken in the interfacial cell nearest the plate).
+converts its sign to the GLE orientation, solves the subgrid GLE at the actual
+local cell size, and refreshes the associated height-function contact angle.
+The signed capillary number uses the plate speed relative to the measured
+contact-line speed, while a dumped scalar preserves the dynamic angle across
+restart. The remaining production qualification is a grid-convergence study
+of the coupled curvature and contact-line-position samples.
 
 ## References
 
@@ -256,8 +257,11 @@ Three items remain before production use, all documented in the source:
 - Huh, C. & Scriven, L. E. (1971). Hydrodynamic model of steady movement of a
   solid/liquid/fluid contact line. *J. Colloid Interface Sci.* **35**, 85–101
   (the wedge-flow mobility).
-- Chan, T. S., Snoeijer, J. H. & Eggers, J. (2013). Theory of the forced
+- Chan, T. S., Snoeijer, J. H. & Eggers, J. (2012). Theory of the forced
   wetting transition. *Phys. Fluids* **24**, 072104 (two-fluid mobility).
+- Chan, T. S., Kamal, C., Snoeijer, J. H., Sprittles, J. E. & Eggers, J.
+  (2020). Cox--Voinov theory with slip. *J. Fluid Mech.* **900**, A8.
+  [doi:10.1017/jfm.2020.499](https://doi.org/10.1017/jfm.2020.499)
 - Kansal, M. *et al.* (2024). *Eur. Phys. J. Spec. Top.*
   [doi:10.1140/epjs/s11734-024-01443-5](https://doi.org/10.1140/epjs/s11734-024-01443-5)
   (linearized-GLE reference data).
