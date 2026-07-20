@@ -26,9 +26,12 @@ Driver-specific keys: `branch_out` (CSV path, default `gle-branch.csv`),
 `mesh_N` (collocation cells, default 2500), `dDelta` (initial march step in
 $\Delta$, default $2\times10^{-3}$).
 
-On completion the fold $(\mathrm{Ca}^{*}, \Delta^{*})$ and the last computed
-point (whose $\mathrm{Ca}$ approaches the Landau–Levich critical speed as
-$\Delta$ grows) are printed.
+On successful completion the fold $(\mathrm{Ca}^{*}, \Delta^{*})$ and the
+last computed point (whose $\mathrm{Ca}$ approaches the Landau–Levich
+critical speed as $\Delta$ grows) are printed. If a point or height limit
+stops the march before an interior fold is bracketed, the partial CSV and
+summary are preserved with `fold_Ca = fold_Delta = NAN`, and the driver exits
+with runtime status 1.
 
 ## Author
 Vatsal Sanjay
@@ -174,6 +177,12 @@ int main (int argc, char *argv[]) {
     return 1;
   }
 
+  int fold_bracketed = isfinite (fold_Ca) && isfinite (fold_Delta);
+  if (!fold_bracketed)
+    fprintf (stderr,
+	     "gle-continuation: fold not bracketed; preserved %d-point "
+	     "partial branch in '%s'\n", n, out_path);
+
   printf ("gle_model     = %s\n", gle_model_name (p.model));
   printf ("c_method      = %s\n",
 	  cutoff.status == GLE_CUTOFF_NOT_USED ? "not_used" :
@@ -193,5 +202,5 @@ int main (int argc, char *argv[]) {
   printf ("branch        -> %s\n", out_path);
 
   gle_colloc_free (&c);
-  return 0;
+  return fold_bracketed ? 0 : 1;
 }

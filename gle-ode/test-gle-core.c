@@ -91,6 +91,32 @@ int main (void) {
     fprintf (stderr, "legacy positional aggregate layout changed\n");
     failed++;
   }
+
+  /* The finite-s0 initial condition starts zeta at s0*cos(theta_e), so the
+     implemented Ca=0 rise is the outer static rise plus that explicit inner
+     offset. It must not be compared to the unshifted analytic rise as an
+     exact identity. */
+  GLEParams static_case = gle_default_params ();
+  static_case.Ca = 0.0;
+  static_case.theta_mic = 53.46*M_PI/180.0;
+  static_case.slip = 7.46e-6;
+  GLESolution static_sol;
+  double static_curvature = gle_static_curvature (static_case.theta_mic,
+						   static_case.grav);
+  double static_outer_rise = static_curvature/static_case.grav;
+  double finite_s0_offset = gle_s0 (&static_case)*cos (static_case.theta_mic);
+  if (gle_shoot (&static_case, static_curvature, &static_sol) ||
+      !isfinite (static_sol.residual) || fabs (static_sol.residual) > 1.0e-8) {
+    fprintf (stderr, "finite-s0 static-limit solve did not converge\n");
+    failed++;
+  }
+  else {
+    failed += check_close ("finite-s0 static rise", static_sol.Delta,
+			   static_outer_rise + finite_s0_offset, 1.0e-8);
+    failed += check_close ("finite-s0 static offset",
+			   static_sol.Delta - static_outer_rise,
+			   finite_s0_offset, 1.0e-8);
+  }
   failed += check_close ("right-angle one-fluid c_slip",
 			 gle_slip_prefactor_right_angle (0.0),
 			 exp (log (2.0) - gamma_E), 5.0e-15);
@@ -713,12 +739,14 @@ int main (void) {
 
   double x;
   long n;
-  if (gle_parse_double ("nan", &x) || gle_parse_double ("1e9999", &x) ||
+  if (gle_parse_double ("", &x) || gle_parse_double ("nan", &x) ||
+      gle_parse_double ("1e9999", &x) ||
       gle_parse_double ("1.0junk", &x) || !gle_parse_double ("1.25", &x)) {
     fprintf (stderr, "strict floating-point parsing regression\n");
     failed++;
   }
-  if (gle_parse_long ("3.5", &n) || gle_parse_long ("2x", &n) ||
+  if (gle_parse_long ("", &n) || gle_parse_long ("3.5", &n) ||
+      gle_parse_long ("2x", &n) ||
       !gle_parse_long ("2500", &n)) {
     fprintf (stderr, "strict integer parsing regression\n");
     failed++;
@@ -743,6 +771,92 @@ int main (void) {
   if (!gle_colloc_alloc (&c, 0) || !gle_colloc_alloc (&c, -1)) {
     fprintf (stderr, "invalid collocation mesh was accepted\n");
     failed++;
+  }
+
+  /* A truncated, monotone history has no bracketed fold; only an interior
+     concave maximum may populate the fold outputs. */
+  {
+    const double fold_D_truncated[3] = { 0.6, 0.7, 0.8 };
+    const double fold_Ca_truncated[3] = { 1.0e-4, 2.0e-4, 3.0e-4 };
+    const double fold_D_bracketed[3] = { 1.3, 1.4, 1.5 };
+    const double fold_Ca_bracketed[3] = { 0.009, 0.010, 0.009 };
+    double fitted_Ca = 0.0, fitted_Delta = 0.0;
+    if (gle_colloc_refine_fold (fold_D_truncated, fold_Ca_truncated, 3,
+				&fitted_Ca, &fitted_Delta) ||
+	!isnan (fitted_Ca) || !isnan (fitted_Delta)) {
+      fprintf (stderr, "truncated branch boundary was reported as a fold\n");
+      failed++;
+    }
+    if (!gle_colloc_refine_fold (fold_D_bracketed, fold_Ca_bracketed, 3,
+				 &fitted_Ca, &fitted_Delta)) {
+      fprintf (stderr, "interior concave fold was not refined\n");
+      failed++;
+    }
+    else {
+      failed += check_close ("synthetic fold Ca", fitted_Ca, 0.010, 1.0e-15);
+      failed += check_close ("synthetic fold Delta", fitted_Delta, 1.4,
+			     1.0e-14);
+    }
+  }
+
+  /* A NaN cell residual used to disappear through fmax() and certify a
+     converged collocation state. Reject both non-finite geometry and state
+     before convergence, and reject non-finite entries in the measured norm. */
+  GLECollocation nonfinite_colloc;
+  if (gle_colloc_alloc (&nonfinite_colloc, 2)) {
+    fprintf (stderr, "non-finite collocation regression allocation failed\n");
+    failed++;
+  }
+  else {
+    GLEParams nonfinite_params = gle_default_params ();
+    nonfinite_colloc.Ca = nonfinite_params.Ca;
+    nonfinite_colloc.s_end = NAN;
+    double static_omega = gle_static_curvature (nonfinite_params.theta_mic,
+						 nonfinite_params.grav);
+    for (int i = 0; i <= nonfinite_colloc.N; i++) {
+      double fraction = (double) i/nonfinite_colloc.N;
+      nonfinite_colloc.y[4*i + 0] =
+	(1.0 - fraction)*gle_h0 (&nonfinite_params) +
+	fraction*nonfinite_params.H_match;
+      nonfinite_colloc.y[4*i + 1] = nonfinite_params.theta_mic;
+      nonfinite_colloc.y[4*i + 2] = static_omega;
+      nonfinite_colloc.y[4*i + 3] =
+	gle_s0 (&nonfinite_params)*cos (nonfinite_params.theta_mic);
+    }
+    double target_Delta = nonfinite_colloc.y[4*nonfinite_colloc.N + 3] +
+	static_omega/nonfinite_params.grav;
+    int nonfinite_iters = 123;
+    if (!gle_colloc_solve (&nonfinite_colloc, &nonfinite_params,
+			    target_Delta, &nonfinite_iters) ||
+	nonfinite_iters != -1 || !isnan (nonfinite_colloc.residual)) {
+      fprintf (stderr, "non-finite collocation geometry was accepted\n");
+      failed++;
+    }
+    nonfinite_colloc.s_end = 6.0;
+    nonfinite_colloc.y[5] = NAN;
+    if (!gle_colloc_solve (&nonfinite_colloc, &nonfinite_params,
+			    target_Delta, NULL)) {
+      fprintf (stderr, "non-finite collocation state was accepted\n");
+      failed++;
+    }
+    double residual_border[2] = { 2.0e-11, -3.0e-11 }, measured_norm = 0.0;
+    for (int i = 0; i < 4*nonfinite_colloc.N + 4; i++)
+      nonfinite_colloc.res[i] = 0.0;
+    if (gle_colloc_residual_max_norm (&nonfinite_colloc, residual_border,
+					&measured_norm)) {
+      fprintf (stderr, "finite collocation residual norm was rejected\n");
+      failed++;
+    }
+    else
+      failed += check_close ("collocation border residual norm", measured_norm,
+			     3.0e-11, 0.0);
+    nonfinite_colloc.res[3] = NAN;
+    if (!gle_colloc_residual_max_norm (&nonfinite_colloc, residual_border,
+					&measured_norm)) {
+      fprintf (stderr, "non-finite collocation residual was accepted\n");
+      failed++;
+    }
+    gle_colloc_free (&nonfinite_colloc);
   }
 
   /* Direct collocation residual/Jacobian APIs also prepare one local copy.
@@ -901,6 +1015,13 @@ int main (void) {
 			       march_c_auto.Ca, march_c_prepared.Ca, 0.0);
 	failed += check_close ("AUTO prepared direct collocation Delta",
 			       march_c_auto.Delta, march_c_prepared.Delta, 0.0);
+	if (!isfinite (march_c_auto.residual) ||
+	    march_c_auto.residual >= 1.0e-10 ||
+	    !isfinite (march_c_prepared.residual) ||
+	    march_c_prepared.residual >= 1.0e-10) {
+	  fprintf (stderr, "direct collocation residual exceeds tolerance\n");
+	  failed++;
+	}
 	int nm_auto = gle_colloc_march (
 	  &march_c_auto, &march_auto, D_auto + 0.01, 0.001, 0.01, 1,
 	  NULL, NULL, NULL, 0);
@@ -916,6 +1037,13 @@ int main (void) {
 				 march_c_auto.Ca, march_c_prepared.Ca, 0.0);
 	  failed += check_close ("AUTO prepared collocation march Delta",
 				 march_c_auto.Delta, march_c_prepared.Delta, 0.0);
+	  if (!isfinite (march_c_auto.residual) ||
+	      march_c_auto.residual >= 1.0e-10 ||
+	      !isfinite (march_c_prepared.residual) ||
+	      march_c_prepared.residual >= 1.0e-10) {
+	    fprintf (stderr, "collocation march residual exceeds tolerance\n");
+	    failed++;
+	  }
 	}
       }
       if (march_auto.c_slip != 3.0) {

@@ -7,7 +7,8 @@ CFLAGS ?= -O2 -std=c99 -Wall -Wextra
 INC = -I../src-local
 MODEL_HEADERS = ../src-local/gle-model.h ../src-local/gle-model-chan.h \
 	../src-local/gle-model-luo-gao.h ../src-local/gle-slip-closure.h \
-	../src-local/gle-slip-reference.h ../src-local/gle-slip-table-data.h
+	../src-local/gle-slip-reference.h ../src-local/gle-slip-scott-data.h \
+	../src-local/gle-slip-table-data.h
 
 all: gle-cutoff gle-solve gle-continuation
 

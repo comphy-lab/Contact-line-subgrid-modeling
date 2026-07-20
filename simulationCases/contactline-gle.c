@@ -46,6 +46,25 @@ Last updated: Jul 20, 2026
 #define MINlevel 3
 #define tsnap (1e-2)
 
+#ifndef GLE_TEST_MODE
+# define GLE_TEST_MODE 0
+#endif
+#ifndef GLE_RESTART_TEST_MODE
+# define GLE_RESTART_TEST_MODE 0
+#endif
+#if GLE_TEST_MODE && GLE_RESTART_TEST_MODE
+# error "GLE_TEST_MODE and GLE_RESTART_TEST_MODE are mutually exclusive"
+#endif
+
+/* The restart regression keeps the production time-based stop schedule while
+   making the DNS deliberately small. */
+#ifndef GLE_RESTART_TEST_TMAX
+# define GLE_RESTART_TEST_TMAX 2e-3
+#endif
+#ifndef GLE_RESTART_TEST_CHECKPOINT
+# define GLE_RESTART_TEST_CHECKPOINT 1e-3
+#endif
+
 /**
 ## Parameters
 
@@ -150,15 +169,22 @@ vector hei[];
 hei.t[bottom] = contact_angle (theta_gle);
 
 /**
-`gle_theta_state` is a spatially constant dumped scalar. Basilisk snapshots
-store fields rather than arbitrary C globals, so this preserves the dynamic
-contact angle across restart. The contact-line velocity history is rebuilt
-from the first post-restart sample; that first sample safely falls back to
-the plate capillary number.
+The four `gle_*_state` fields are spatially constant dumped scalars. Basilisk
+snapshots store named fields rather than arbitrary C globals, so these preserve
+both the dynamic contact angle and the preceding contact-line sample across a
+restart. Older snapshots without the three history fields remain readable: the
+first valid post-restart sample only rebuilds the velocity history and leaves
+the restored angle unchanged.
 */
 scalar gle_theta_state[];
+scalar gle_previous_x_state[];
+scalar gle_previous_t_state[];
+scalar gle_history_valid_state[];
 static double gle_previous_x = 0., gle_previous_t = 0.;
 static bool gle_have_previous = false;
+static bool gle_needs_history_sample = false;
+static bool gle_was_restored = false;
+static bool gle_first_restored_sample = false;
 static unsigned long gle_missing_samples = 0;
 static double gle_last_Delta = nodata;
 
@@ -167,28 +193,87 @@ static bool gle_test_candidate_found = false;
 static bool gle_test_angle_changed = false;
 #endif
 
-static void gle_store_theta_state (void) {
-  foreach()
+#if GLE_RESTART_TEST_MODE
+static void gle_restart_test_record (double xcl, double previous_x,
+				     double previous_t,
+				     double contact_line_speed,
+				     double Ca_local, bool used_history,
+				     bool sample_only) {
+  if (pid() != 0)
+    return;
+  static bool started = false;
+  FILE * fp = fopen ("gle-restart-trace.tsv",
+		    started || gle_was_restored ? "a" : "w");
+  if (!fp) {
+    perror ("gle-restart-trace.tsv");
+    exit (2);
+  }
+  fprintf (fp, "%d %.17g %.17g %.17g %.17g %.17g %.17g %.17g "
+	   "%d %d %d %d\n",
+	   iter, t, xcl, previous_x, previous_t, contact_line_speed, Ca_local,
+	   theta_gle, used_history, sample_only, gle_was_restored,
+	   gle_first_restored_sample);
+  fclose (fp);
+  started = true;
+}
+#endif
+
+static void gle_store_restart_state (void) {
+  foreach() {
     gle_theta_state[] = theta_gle;
-  boundary ({gle_theta_state});
+    gle_previous_x_state[] = gle_previous_x;
+    gle_previous_t_state[] = gle_previous_t;
+    gle_history_valid_state[] = gle_have_previous ? 1. : 0.;
+  }
+  boundary ({gle_theta_state, gle_previous_x_state, gle_previous_t_state,
+	     gle_history_valid_state});
 }
 
-static void gle_restore_theta_state (void) {
+static void gle_restore_restart_state (void) {
   double restored_theta = -HUGE;
-  foreach (reduction(max:restored_theta))
+  double restored_x = -HUGE, restored_t = -HUGE, restored_valid = -HUGE;
+  foreach (reduction(max:restored_theta) reduction(max:restored_x)
+	   reduction(max:restored_t) reduction(max:restored_valid)) {
     if (isfinite (gle_theta_state[]) && gle_theta_state[] > 0. &&
 	gle_theta_state[] < pi)
       restored_theta = max (restored_theta, gle_theta_state[]);
+    if (isfinite (gle_previous_x_state[]))
+      restored_x = max (restored_x, gle_previous_x_state[]);
+    if (isfinite (gle_previous_t_state[]))
+      restored_t = max (restored_t, gle_previous_t_state[]);
+    if (isfinite (gle_history_valid_state[]))
+      restored_valid = max (restored_valid, gle_history_valid_state[]);
+  }
   if (restored_theta > 0.)
     theta_gle = restored_theta;
   else if (pid() == 0)
     fprintf (ferr, "warning: restart has no valid GLE angle; using theta_mic\n");
-  gle_have_previous = false;
+
+  if (restored_valid > 0.5 && restored_x > -HUGE && restored_t > -HUGE &&
+      restored_t <= t + 1e-12*max (1., fabs (t))) {
+    gle_previous_x = restored_x;
+    gle_previous_t = restored_t;
+    gle_have_previous = true;
+    gle_needs_history_sample = false;
+  }
+  else {
+    gle_have_previous = false;
+    gle_needs_history_sample = true;
+    if (pid() == 0)
+      fprintf (ferr,
+	       "warning: restart has no valid GLE velocity history; "
+	       "sampling once before the next GLE solve\n");
+  }
+  gle_was_restored = true;
+  gle_first_restored_sample = true;
 }
 
 int main() {
 #if GLE_TEST_MODE
   tmax = 1e-3;
+  MAXlevel = 5;
+#elif GLE_RESTART_TEST_MODE
+  tmax = GLE_RESTART_TEST_TMAX;
   MAXlevel = 5;
 #else
   tmax = 1e2;
@@ -253,10 +338,10 @@ event init(t = 0){
        startup mesh while retaining only a narrow interface/wall band. */
     refine ((fabs (x) <= 2.*Delta || y <= 2.*Delta) && level < MAXlevel);
     fraction (f, -x);
-    gle_store_theta_state ();
+    gle_store_restart_state ();
   }
   else
-    gle_restore_theta_state ();
+    gle_restore_restart_state ();
 }
 
 /**
@@ -312,37 +397,54 @@ event gle_boundary (i++) {
     gle_test_candidate_found = true;
 #endif
 
-    double Ca_local = Ca;
-    if (gle_have_previous && t > gle_previous_t) {
-      double contact_line_speed = (xcl - gle_previous_x)/(t - gle_previous_t);
+#if GLE_RESTART_TEST_MODE
+    double previous_x = gle_previous_x, previous_t = gle_previous_t;
+#endif
+    bool used_history = gle_have_previous && t > gle_previous_t;
+    bool sample_only = gle_needs_history_sample ||
+      (gle_have_previous && t <= gle_previous_t);
+    double contact_line_speed = nodata, Ca_local = nodata;
+    if (!sample_only) {
+      contact_line_speed = used_history ?
+	(xcl - gle_previous_x)/(t - gle_previous_t) : 0.;
       Ca_local = Ca - contact_line_speed;
     }
     gle_previous_x = xcl;
     gle_previous_t = t;
     gle_have_previous = true;
+    gle_needs_history_sample = false;
 
-    GLEParams gp = gle_case_params;
-    gp.Ca = Ca_local;              /* plate speed minus line speed */
-    /* Here h = y and the GLE arclength points from the contact line toward
-       the bath, opposite to Basilisk's normal orientation for `f = -x`.
-       Consequently omega_GLE = -kappa_Basilisk for this geometry. */
-    double omega_dns = -kappa_cl;
+    if (!sample_only) {
+      GLEParams gp = gle_case_params;
+      gp.Ca = Ca_local;            /* plate speed minus line speed */
+      /* Here h = y and the GLE arclength points from the contact line toward
+	 the bath, opposite to Basilisk's normal orientation for `f = -x`.
+	 Consequently omega_GLE = -kappa_Basilisk for this geometry. */
+      double omega_dns = -kappa_cl;
 #if GLE_TEST_MODE
-    double old_theta = theta_gle;
+      double old_theta = theta_gle;
 #endif
-    double th = gle_dns_apparent_angle (&gp, omega_dns, Delta_cl,
-					theta_gle);
-    if (isfinite (th) && th > 0.01 && th < pi - 0.01) {
-      theta_gle = th;
-      gle_store_theta_state ();
+      double th = gle_dns_apparent_angle (&gp, omega_dns, Delta_cl,
+					  theta_gle);
+      if (isfinite (th) && th > 0.01 && th < pi - 0.01) {
+	theta_gle = th;
 #if GLE_TEST_MODE
-      if (fabs (theta_gle - old_theta) > 1e-12)
-	gle_test_angle_changed = true;
+	if (fabs (theta_gle - old_theta) > 1e-12)
+	  gle_test_angle_changed = true;
 #endif
+      }
     }
+    gle_store_restart_state ();
+#if GLE_RESTART_TEST_MODE
+    gle_restart_test_record (xcl, previous_x, previous_t,
+			     contact_line_speed, Ca_local, used_history,
+			     sample_only);
+#endif
+    gle_first_restored_sample = false;
   }
   else {
     gle_have_previous = false;
+    gle_needs_history_sample = true;
     gle_missing_samples++;
     if (pid() == 0 &&
 	(gle_missing_samples <= 3 || gle_missing_samples % 100 == 0))
@@ -364,7 +466,7 @@ event adapt(i++) {
 */
 #if !GLE_TEST_MODE
 event writingFiles (t = 0; t += tsnap; t <= tmax + tsnap) {
-  gle_store_theta_state ();
+  gle_store_restart_state ();
   dump (file = "restart");
   char nameOut[80];
   sprintf (nameOut, "intermediate/snapshot-%5.4f", t);
@@ -385,6 +487,30 @@ event logWriting (i++) {
   fprintf (fp, "%d %g %g %g %g\n", i, dt, t, ke, theta_gle*180.0/pi);
   fclose(fp);
   fprintf (ferr, "%d %g %g %g %g\n", i, dt, t, ke, theta_gle*180.0/pi);
+}
+
+#if GLE_RESTART_TEST_MODE
+/** Deliberately interrupt the bounded restart regression at a scheduled time. */
+event gle_restart_test_interrupt (t = GLE_RESTART_TEST_CHECKPOINT) {
+  if (getenv ("GLE_RESTART_TEST_INTERRUPT")) {
+    gle_store_restart_state ();
+    dump (file = "restart");
+    if (pid() == 0)
+      fprintf (ferr, "GLE_RESTART_TEST: interrupted i=%d t=%.17g\n", i, t);
+    return 1;
+  }
+}
+#endif
+
+/** Terminate the production schedule exactly at its declared horizon. */
+event stop (t = tmax) {
+  gle_store_restart_state ();
+  dump (file = "restart");
+#if GLE_RESTART_TEST_MODE
+  if (pid() == 0)
+    fprintf (ferr, "GLE_RESTART_TEST: production stop i=%d t=%.17g\n", i, t);
+#endif
+  return 1;
 }
 #else
 /**

@@ -211,6 +211,7 @@ typedef struct {
   double *colCa, *colS; /* border columns                                  */
   double *ytmp;
   gle_band_matrix band;
+  double residual;    /* final full max norm, including the two borders    */
 } GLECollocation;
 
 /**
@@ -262,6 +263,7 @@ static inline int gle_colloc_alloc (GLECollocation *c, int N) {
     c->tau[i] = (double) i/N;
   c->tau_split = 0.45;
   c->s_split = 0.3;
+  c->residual = NAN;
   if (gle_band_alloc (&c->band, 4*N + 4, 7, 7)) {
     free (c->tau); free (c->y); free (c->res);
     free (c->colCa); free (c->colS); free (c->ytmp);
@@ -478,11 +480,65 @@ static inline double gle_colloc_border_dot (int which, int N,
 }
 
 /**
+### gle_colloc_residual_max_norm()
+
+Measures the full nonlinear residual, including the two dense border rows.
+An explicit finiteness check is essential: C99 `fmax(finite, NAN)` returns the
+finite operand and would otherwise allow a non-finite cell residual to
+disappear from the convergence norm.
+
+#### Returns
+`0` and writes the max norm on success, `1` if any residual is non-finite.
+*/
+static inline int
+gle_colloc_residual_max_norm (const GLECollocation *c, const double rb[2],
+				      double *norm_out) {
+  if (!c || !c->res || !rb || !norm_out || c->N < 2 ||
+      c->N > (INT_MAX - 4)/4)
+    return 1;
+  int n = 4*c->N + 4;
+  double norm = 0.0;
+  for (int i = 0; i < n; i++) {
+    if (!isfinite (c->res[i]))
+      return 1;
+    norm = fmax (norm, fabs (c->res[i]));
+  }
+  for (int i = 0; i < 2; i++) {
+    if (!isfinite (rb[i]))
+      return 1;
+    norm = fmax (norm, fabs (rb[i]));
+  }
+  *norm_out = norm;
+  return 0;
+}
+
+static inline int gle_colloc_vector_is_finite (const double *values, size_t n) {
+  if (!values)
+    return 0;
+  for (size_t i = 0; i < n; i++)
+    if (!isfinite (values[i]))
+      return 0;
+  return 1;
+}
+
+static inline int
+gle_colloc_state_is_finite (const GLECollocation *c, const GLEParams *p,
+			    double Delta_target) {
+  if (!c || !p || c->N < 2 || c->N > (INT_MAX - 4)/4 ||
+      !isfinite (Delta_target) || !isfinite (c->Ca) || c->Ca < 0.0 ||
+      !isfinite (c->s_end) || !isfinite (p->grav) || p->grav <= 0.0 ||
+      !isfinite (gle_s0 (p)) || c->s_end <= 2.0*gle_s0 (p))
+    return 0;
+  return gle_colloc_vector_is_finite (c->y, 4*c->N + 4);
+}
+
+/**
 ### gle_colloc_solve()
 
 Damped Newton on the bordered system at fixed `Delta_target`. `c->y`,
 `c->Ca`, `c->s_end` must hold a starting guess (typically the previous
 branch point). On success, `c->Delta` is updated and `p->Ca = c->Ca`.
+`c->residual` records the final full max norm, including both border rows.
 The selected model is resolved once on a local copy; only the final `Ca` is
 written back to the caller-owned parameter set.
 
@@ -497,23 +553,44 @@ static inline int gle_colloc_solve_prepared (GLECollocation *c, GLEParams *p,
   const int maxit = 30;
   const double tol = 1.0e-10;
 
+  c->residual = NAN;
+  if (iters_out)
+    *iters_out = -1;
+
   for (int it = 0; it < maxit; it++) {
     double rb[2], rbCa[2], rbS[2];
+    if (!gle_colloc_state_is_finite (c, p, Delta_target))
+      return 1;
     p->Ca = c->Ca;
     gle_colloc_assemble_prepared (c, p, Delta_target, rb, rbCa, rbS);
 
-    double rnorm = 0.0;
-    for (int i = 0; i < n; i++)
-      rnorm = fmax (rnorm, fabs (c->res[i]));
-    rnorm = fmax (rnorm, fmax (fabs (rb[0]), fabs (rb[1])));
+    double rnorm;
+    if (gle_colloc_residual_max_norm (c, rb, &rnorm))
+      return 1;
+    c->residual = rnorm;
     if (rnorm < tol) {
       c->Delta = c->y[4*N + 3] + c->y[4*N + 2]/p->grav;
+      if (!isfinite (c->Delta)) {
+	c->residual = NAN;
+	return 1;
+      }
       if (iters_out)
 	*iters_out = it;
       return 0;
     }
 
+    if (!gle_colloc_vector_is_finite (rbCa, 2) ||
+	!gle_colloc_vector_is_finite (rbS, 2) ||
+	!gle_colloc_vector_is_finite (c->colCa, n) ||
+	!gle_colloc_vector_is_finite (c->colS, n) ||
+	!gle_colloc_vector_is_finite (c->band.ab,
+				      (size_t) c->band.ldab*n))
+      return 1;
+
     if (gle_band_factor (&c->band))
+      return 1;
+    if (!gle_colloc_vector_is_finite (c->band.ab,
+				      (size_t) c->band.ldab*n))
       return 1;
 
     /* three back-solves: residual and the two border columns */
@@ -521,6 +598,10 @@ static inline int gle_colloc_solve_prepared (GLECollocation *c, GLEParams *p,
     gle_band_solve (&c->band, xr);
     gle_band_solve (&c->band, xc);
     gle_band_solve (&c->band, xs);
+    if (!gle_colloc_vector_is_finite (xr, n) ||
+	!gle_colloc_vector_is_finite (xc, n) ||
+	!gle_colloc_vector_is_finite (xs, n))
+      return 1;
 
     /* bordered 2x2 reduction:
        [ b0.(xc)  b0.(xs) ] [dCa]   [ rb0 - b0.xr ]
@@ -540,10 +621,14 @@ static inline int gle_colloc_solve_prepared (GLECollocation *c, GLEParams *p,
     double q0 = -rb[0] + gle_colloc_border_dot (0, N, xr, p->grav);
     double q1 = -rb[1] + gle_colloc_border_dot (1, N, xr, p->grav);
     double det = M00*M11 - M01*M10;
-    if (!isfinite (det) || fabs (det) < 1.0e-300)
+    if (!isfinite (M00) || !isfinite (M01) || !isfinite (M10) ||
+	!isfinite (M11) || !isfinite (q0) || !isfinite (q1) ||
+	!isfinite (det) || fabs (det) < 1.0e-300)
       return 1;
     double dCa = ( M11*q0 - M01*q1)/det;
     double dS = (-M10*q0 + M00*q1)/det;
+    if (!isfinite (dCa) || !isfinite (dS))
+      return 1;
 
     /* damping: limit relative moves of Ca and s_end, and keep the state
        physical (theta in (0,pi), h > 0) by fractional steps */
@@ -560,7 +645,8 @@ static inline int gle_colloc_solve_prepared (GLECollocation *c, GLEParams *p,
 					  + xs[4*i + 0]*dS);
 	double tn = c->y[4*i + 1] - damp*(xr[4*i + 1] + xc[4*i + 1]*dCa
 					  + xs[4*i + 1]*dS);
-	if (hn <= 0.0 || tn <= -0.5*M_PI || tn >= M_PI) {
+	if (!isfinite (hn) || !isfinite (tn) || hn <= 0.0 ||
+	    tn <= -0.5*M_PI || tn >= M_PI) {
 	  ok = 0;
 	  break;
 	}
@@ -570,12 +656,19 @@ static inline int gle_colloc_solve_prepared (GLECollocation *c, GLEParams *p,
       damp *= 0.5;
     }
 
-    for (int i = 0; i < n; i++)
-      c->ytmp[i] = c->y[i] - damp*(xr[i] + xc[i]*dCa + xs[i]*dS);
+    if (!isfinite (damp) || damp <= 0.0)
+      return 1;
+    for (int i = 0; i < n; i++) {
+      double update = xr[i] + xc[i]*dCa + xs[i]*dS;
+      c->ytmp[i] = c->y[i] - damp*update;
+      if (!isfinite (update) || !isfinite (c->ytmp[i]))
+	return 1;
+    }
     memcpy (c->y, c->ytmp, n*sizeof (double));
     c->Ca += damp*dCa;
     c->s_end += damp*dS;
-    if (c->Ca <= 0.0 || c->s_end <= gle_s0 (p)*2.0)
+    if (!isfinite (c->Ca) || !isfinite (c->s_end) || c->Ca <= 0.0 ||
+	c->s_end <= gle_s0 (p)*2.0)
       return 1;
   }
   return 1;
@@ -684,6 +777,67 @@ static inline int gle_colloc_seed_from_shoot (GLECollocation *c,
 }
 
 /**
+### gle_colloc_refine_fold()
+
+Fits the vertex of the three samples around the largest recorded capillary
+number. A fold is reported only when that sample is an interior, strict local
+maximum and the fitted parabola is finite, concave, and has its vertex inside
+the neighbouring $\Delta$ interval. Thus a march truncated by `Delta_max` or
+`max_points` cannot mislabel its final boundary sample as a fold.
+
+#### Returns
+`1` when a bracketed fold was refined, `0` otherwise. Missing outputs are set
+to `NAN`.
+*/
+static inline int gle_colloc_refine_fold (const double *hist_D,
+					  const double *hist_Ca, int npts,
+					  double *fold_Ca,
+					  double *fold_Delta) {
+  if (fold_Ca)
+    *fold_Ca = NAN;
+  if (fold_Delta)
+    *fold_Delta = NAN;
+  if (!hist_D || !hist_Ca || npts < 3)
+    return 0;
+
+  int im = 0;
+  for (int i = 0; i < npts; i++) {
+    if (!isfinite (hist_D[i]) || !isfinite (hist_Ca[i]))
+      return 0;
+    if (hist_Ca[i] > hist_Ca[im])
+      im = i;
+  }
+  if (im <= 0 || im >= npts - 1 ||
+      !(hist_Ca[im] > hist_Ca[im - 1] &&
+	hist_Ca[im] > hist_Ca[im + 1]))
+    return 0;
+
+  double d1 = hist_D[im - 1], d2 = hist_D[im], d3 = hist_D[im + 1];
+  double c1 = hist_Ca[im - 1], c2 = hist_Ca[im], c3 = hist_Ca[im + 1];
+  if (!(d1 < d2 && d2 < d3))
+    return 0;
+  double denom = (d1 - d2)*(d1 - d3)*(d2 - d3);
+  if (!isfinite (denom) || denom == 0.0)
+    return 0;
+  double A = (d3*(c2 - c1) + d2*(c1 - c3) +
+	      d1*(c3 - c2))/denom;
+  double B = (d3*d3*(c1 - c2) + d2*d2*(c3 - c1) +
+	      d1*d1*(c2 - c3))/denom;
+  if (!isfinite (A) || !isfinite (B) || !(A < 0.0))
+    return 0;
+  double fD = -B/(2.0*A);
+  double C0 = c1 - A*d1*d1 - B*d1;
+  double fCa = A*fD*fD + B*fD + C0;
+  if (!isfinite (fD) || !isfinite (fCa) || !(fD > d1 && fD < d3))
+    return 0;
+  if (fold_Ca)
+    *fold_Ca = fCa;
+  if (fold_Delta)
+    *fold_Delta = fD;
+  return 1;
+}
+
+/**
 ### gle_colloc_march()
 
 Traces the full Fig. 4b branch by marching the target meniscus rise
@@ -694,9 +848,11 @@ adaptive $\mathrm{d}\Delta$ (halve on failure, grow $1.4\times$ on fast
 convergence).
 
 Writes one CSV row per accepted point when `csv` is non-`NULL` (same schema
-as `gle_branch_csv_header()`), tracks the running $\mathrm{Ca}$ maximum, and
-refines the fold location by a quadratic fit of $\mathrm{Ca}(\Delta)$
-through the maximum and its neighbours.
+as `gle_branch_csv_header()`), including the measured full collocation
+residual. It tracks the running $\mathrm{Ca}$ maximum and refines the fold
+location by a quadratic fit of $\mathrm{Ca}(\Delta)$ through the maximum and
+its neighbours. Fold outputs remain `NAN` unless the maximum is an interior,
+strict local maximum with a concave fitted vertex inside that bracket.
 
 The selected model is resolved once on a local copy for the entire march;
 every Newton/Jacobian evaluation uses the prepared-only kernel.
@@ -723,6 +879,10 @@ static inline int gle_colloc_march_prepared (GLECollocation *c, GLEParams *p,
 					     double *fold_Ca,
 					     double *fold_Delta,
 					     int verbose) {
+  if (fold_Ca)
+    *fold_Ca = NAN;
+  if (fold_Delta)
+    *fold_Delta = NAN;
   if (!c || !p || c->N < 2 || c->N > (INT_MAX - 4)/4 ||
       !isfinite (Delta_max) || Delta_max <= 0.0 ||
       !isfinite (dDelta0) || dDelta0 <= 0.0 ||
@@ -756,6 +916,7 @@ static inline int gle_colloc_march_prepared (GLECollocation *c, GLEParams *p,
   memcpy (y_good, c->y, n*sizeof (double));
   memcpy (y_prev, c->y, n*sizeof (double));
   double Ca_good = c->Ca, S_good = c->s_end, D_good = D;
+  double residual_good = c->residual;
   double Ca_prev = c->Ca, S_prev = c->s_end, D_prev = D;
 
   /* fold bookkeeping: full (Delta, Ca) history for the post-fit */
@@ -778,7 +939,7 @@ static inline int gle_colloc_march_prepared (GLECollocation *c, GLEParams *p,
       GLEBranchPoint b;							\
       b.Ca = c->Ca; b.Delta = c->Delta; b.omega0 = c->y[2];		\
       b.theta_app = th_app; b.theta_min = th_min;			\
-      b.s_end = c->s_end; b.residual = 0.0; b.iters = iters;		\
+      b.s_end = c->s_end; b.residual = c->residual; b.iters = iters;	\
       gle_branch_csv_row (csv, npts, &b);				\
       fflush (csv);							\
     }									\
@@ -807,6 +968,7 @@ static inline int gle_colloc_march_prepared (GLECollocation *c, GLEParams *p,
       c->Ca = Ca_good;
       c->s_end = S_good;
       c->Delta = D_good;
+      c->residual = residual_good;
       if (dD < dD_min) {
 	if (verbose)
 	  fprintf (stderr, "gle_colloc_march: step underflow at "
@@ -821,6 +983,7 @@ static inline int gle_colloc_march_prepared (GLECollocation *c, GLEParams *p,
     Ca_prev = Ca_good; S_prev = S_good; D_prev = D_good;
     memcpy (y_good, c->y, n*sizeof (double));
     Ca_good = c->Ca; S_good = c->s_end; D_good = D_new;
+    residual_good = c->residual;
 
     GLE_COLLOC_EMIT ();
 
@@ -833,32 +996,16 @@ static inline int gle_colloc_march_prepared (GLECollocation *c, GLEParams *p,
       dD = fmin (1.4*dD, dD_max);
   }
 
-  /* fold refinement: quadratic vertex of Ca(Delta) around the history
-     maximum */
-  if ((fold_Ca || fold_Delta) && hist_D && hist_Ca && npts >= 3) {
-    int im = 0;
-    for (int i = 1; i < npts; i++)
-      if (hist_Ca[i] > hist_Ca[im])
-	im = i;
-    int i1 = (im > 0 ? im - 1 : im), i3 = (im < npts - 1 ? im + 1 : im);
-    double d1 = hist_D[i1], d2 = hist_D[im], d3 = hist_D[i3];
-    double c1 = hist_Ca[i1], c2 = hist_Ca[im], c3 = hist_Ca[i3];
-    double fCa = c2, fD = d2;
-    double denom = (d1 - d2)*(d1 - d3)*(d2 - d3);
-    if (fabs (denom) > 0.0) {
-      double A = (d3*(c2 - c1) + d2*(c1 - c3) + d1*(c3 - c2))/denom;
-      double B = (d3*d3*(c1 - c2) + d2*d2*(c3 - c1) + d1*d1*(c2 - c3))/denom;
-      if (A != 0.0) {
-	fD = -B/(2.0*A);
-	double C0 = c1 - A*d1*d1 - B*d1;
-	fCa = A*fD*fD + B*fD + C0;
-      }
-    }
-    if (fold_Ca) *fold_Ca = fCa;
-    if (fold_Delta) *fold_Delta = fD;
+  double refined_Ca, refined_Delta;
+  if (gle_colloc_refine_fold (hist_D, hist_Ca, npts, &refined_Ca,
+			      &refined_Delta)) {
+    if (fold_Ca)
+      *fold_Ca = refined_Ca;
+    if (fold_Delta)
+      *fold_Delta = refined_Delta;
     if (verbose)
       fprintf (stderr, "gle_colloc_march: fold at Ca* = %.6e, "
-	       "Delta* = %.4f\n", fCa, fD);
+	       "Delta* = %.4f\n", refined_Ca, refined_Delta);
   }
 #undef GLE_COLLOC_EMIT
   free (hist_D);

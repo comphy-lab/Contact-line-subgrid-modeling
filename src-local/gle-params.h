@@ -22,6 +22,7 @@ Last updated: Jul 20, 2026
 #ifndef GLE_PARAMS_H
 #define GLE_PARAMS_H
 
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -78,6 +79,17 @@ static int gle_parse_long (const char *val, long *out) {
     return 0;
   *out = v;
   return 1;
+}
+
+/** Trim leading and trailing ASCII/C-locale whitespace in place. */
+static char *gle_trim_whitespace (char *text) {
+  while (*text && isspace ((unsigned char) *text))
+    text++;
+  char *end = text + strlen (text);
+  while (end > text && isspace ((unsigned char) end[-1]))
+    end--;
+  *end = '\0';
+  return text;
 }
 
 /**
@@ -369,7 +381,9 @@ as the first bare CLI argument, then every CLI `key=value` override left to
 right. Only the first bare argument is treated as a parameter file path; any
 subsequent bare argument is reported to `stderr` as an ignored extra
 positional argument rather than being opened. `o` may be `NULL` for drivers
-without continuation options.
+without continuation options. File entries are split at the first `=` and the
+complete trimmed right-hand side is parsed; empty recognised values and
+trailing non-comment tokens are errors rather than silent defaults.
 
 #### Returns
 `0` on success, `1` if a recognised value is malformed. Unknown keys remain
@@ -395,18 +409,38 @@ static inline int gle_params_load (int argc, char *argv[], GLEParams *p,
 	exit (1);
       }
       char line[512];
+      long line_number = 0;
       while (fgets (line, sizeof line, fp)) {
+	line_number++;
 	char *hash = strchr (line, '#');
 	if (hash) *hash = '\0';
-	char key[128], val[128];
-	if (sscanf (line, " %127[^= \t] = %127s", key, val) == 2) {
-	  int applied = gle_kv_apply (p, o, key, val);
-	  if (applied < 0)
-	    bad = 1;
-	  else if (!applied)
-	    fprintf (stderr, "gle-params: unknown key '%s' in %s\n",
-		     key, argv[i]);
+	char *entry = gle_trim_whitespace (line);
+	if (!entry[0])
+	  continue;
+	char *separator = strchr (entry, '=');
+	if (!separator) {
+	  fprintf (stderr, "gle-params: malformed line %ld in %s "
+		   "(expected key=value)\n", line_number, argv[i]);
+	  bad = 1;
+	  continue;
 	}
+	*separator = '\0';
+	char *key = gle_trim_whitespace (entry);
+	char *val = gle_trim_whitespace (separator + 1);
+	if (!key[0]) {
+	  fprintf (stderr, "gle-params: empty key on line %ld in %s\n",
+		   line_number, argv[i]);
+	  bad = 1;
+	  continue;
+	}
+	/* Pass the complete trimmed RHS. The strict scalar and selector parsers
+	   then reject both an empty value and trailing, non-comment tokens. */
+	int applied = gle_kv_apply (p, o, key, val);
+	if (applied < 0)
+	  bad = 1;
+	else if (!applied)
+	  fprintf (stderr, "gle-params: unknown key '%s' in %s\n",
+		   key, argv[i]);
       }
       fclose (fp);
     }

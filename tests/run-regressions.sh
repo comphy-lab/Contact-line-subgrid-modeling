@@ -38,28 +38,104 @@ grep -q '^c             = 0.025' \
   Ca=1e-6 gle_model=luo_gao c_slip=0 \
   profile_out="$test_dir/profile-luo-gao.csv" >/dev/null
 
-expect_failure () {
-  if "$@" >"$test_dir/rejected.stdout" 2>"$test_dir/rejected.stderr"; then
-    echo "expected command to reject invalid input: $*" >&2
+expect_rejection () {
+  expected_diagnostic=$1
+  shift
+  set +e
+  "$@" >"$test_dir/rejected.stdout" 2>"$test_dir/rejected.stderr"
+  rejection_status=$?
+  set -e
+  if [ "$rejection_status" -ne 2 ]; then
+    echo "expected rejection status 2, got $rejection_status: $*" >&2
+    cat "$test_dir/rejected.stderr" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected_diagnostic" "$test_dir/rejected.stderr"; then
+    echo "missing rejection diagnostic '$expected_diagnostic': $*" >&2
+    cat "$test_dir/rejected.stderr" >&2
     exit 1
   fi
 }
 
-expect_failure "$repo_dir/gle-ode/gle-solve" \
+expect_rejection "manual Chan c_slip must be finite and positive" \
+  "$repo_dir/gle-ode/gle-solve" \
   "$repo_dir/gle-ode/fig4b.params" c_slip=0
-expect_failure "$repo_dir/gle-ode/gle-solve" \
+expect_rejection "unknown gle_model 'unknown'" "$repo_dir/gle-ode/gle-solve" \
   "$repo_dir/gle-ode/fig4b.params" gle_model=unknown
-expect_failure "$repo_dir/gle-ode/gle-solve" \
+expect_rejection "unknown c_method 'unknown'" "$repo_dir/gle-ode/gle-solve" \
   "$repo_dir/gle-ode/fig4b.params" c_method=unknown
-expect_failure "$repo_dir/gle-ode/gle-cutoff" gle_model=luo_gao
-expect_failure "$repo_dir/gle-ode/gle-cutoff" \
+expect_rejection "direct Luo--Gao does not use c" \
+  "$repo_dir/gle-ode/gle-cutoff" gle_model=luo_gao
+expect_rejection "cannot resolve c_method=manual" \
+  "$repo_dir/gle-ode/gle-cutoff" \
   theta_mic_deg=60 mu_r=-0.1 c_method=manual c_slip=3
-expect_failure "$repo_dir/gle-ode/gle-continuation" \
+expect_rejection "max_points must be at least 3" \
+  "$repo_dir/gle-ode/gle-continuation" \
   "$repo_dir/gle-ode/fig4b.params" max_points=0 branch_out="$test_dir/a.csv"
-expect_failure "$repo_dir/gle-ode/gle-continuation" \
+expect_rejection "mesh_N must be an integer" \
+  "$repo_dir/gle-ode/gle-continuation" \
   "$repo_dir/gle-ode/fig4b.params" mesh_N=-1 branch_out="$test_dir/b.csv"
-expect_failure "$repo_dir/gle-ode/gle-continuation" \
+expect_rejection "dDelta must be finite and positive" \
+  "$repo_dir/gle-ode/gle-continuation" \
   "$repo_dir/gle-ode/fig4b.params" dDelta=0 branch_out="$test_dir/c.csv"
+
+printf '%s\n' 'mu_r =' >"$test_dir/empty-rhs.params"
+expect_rejection "bad numeric value '' for key 'mu_r'" \
+  "$repo_dir/gle-ode/gle-solve" "$test_dir/empty-rhs.params"
+printf '%s\n' 'Ca = 1 junk' >"$test_dir/trailing-junk.params"
+expect_rejection "bad numeric value '1 junk' for key 'Ca'" \
+  "$repo_dir/gle-ode/gle-solve" "$test_dir/trailing-junk.params"
+
+# A point-limited lower-branch trace has not bracketed the turning point, so
+# its final sample must never be promoted to a fold.
+set +e
+"$repo_dir/gle-ode/gle-continuation" "$repo_dir/gle-ode/fig4b.params" \
+  mesh_N=100 max_points=3 verbose=1 branch_out="$test_dir/truncated.csv" \
+  >"$test_dir/truncated.txt" 2>"$test_dir/truncated.stderr"
+truncated_status=$?
+set -e
+if [ "$truncated_status" -ne 1 ]; then
+  echo "expected truncated continuation status 1, got $truncated_status" >&2
+  cat "$test_dir/truncated.stderr" >&2
+  exit 1
+fi
+grep -Fq 'fold not bracketed; preserved 3-point partial branch' \
+  "$test_dir/truncated.stderr"
+awk -F= '
+  /^fold_Ca/ {
+    value = tolower($2); gsub(/[[:space:]]/, "", value)
+    if (value !~ /nan/) exit 1
+    found = 1
+  }
+  END { if (!found) exit 1 }
+' "$test_dir/truncated.txt"
+
+# Trace through the fold and upper branch, then require every emitted nonlinear
+# residual (including both border rows) to be finite and below the Newton gate.
+"$repo_dir/gle-ode/gle-continuation" "$repo_dir/gle-ode/fig4b.params" \
+  mesh_N=100 Delta_max=3.7 dDelta=0.01 dDelta_max=0.02 max_points=500 \
+  verbose=0 branch_out="$test_dir/complete.csv" >"$test_dir/complete.txt"
+awk -F= '
+  /^fold_Ca/ {
+    value = tolower($2); gsub(/[[:space:]]/, "", value)
+    if (value ~ /nan|inf/ || value + 0 <= 0) exit 1
+    found = 1
+  }
+  END { if (!found) exit 1 }
+' "$test_dir/complete.txt"
+awk -F, '
+  NR == 1 {
+    if ($8 != "residual") exit 1
+    next
+  }
+  {
+    value = tolower($8)
+    if (value ~ /nan|inf/ || $8 + 0 < 0 || $8 + 0 >= 1.0e-10) exit 1
+    last_delta = $3
+    rows++
+  }
+  END { if (rows < 3 || last_delta < 3.7) exit 1 }
+' "$test_dir/complete.csv"
 
 if command -v qcc >/dev/null 2>&1; then
   echo "qcc found - running bounded Basilisk coupling regression"
@@ -79,3 +155,5 @@ if command -v qcc >/dev/null 2>&1; then
 else
   echo "qcc not found - skipping Basilisk coupling regression"
 fi
+
+"$repo_dir/tests/run-basilisk-restart-regression.sh"
