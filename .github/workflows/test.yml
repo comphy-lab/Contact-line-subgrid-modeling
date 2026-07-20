@@ -9,6 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  documentation-site:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Verify documentation security and failure gates
+        run: |
+          python3 -m unittest discover -s .github/tests -p 'test_*.py' -v
+          node .github/tests/test_search_helper.js
+
   standalone-c99:
     runs-on: ubuntu-24.04
     steps:
@@ -63,3 +72,5 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
       - name: Verify generator and frozen evidence
         run: sh tests/verify-reference-table.sh
+      - name: Verify Figure 4b validation grid
+        run: uv run postProcess/test-plot-fig4b.py

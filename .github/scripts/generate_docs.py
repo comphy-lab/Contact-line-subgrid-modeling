@@ -59,8 +59,18 @@ Author: Vatsal Sanjay
 Organization: CoMPhy Lab, Durham University
 """
 import ast
+import argparse
+import hashlib
+import html
 import inspect
-import os, subprocess, re, shutil, argparse, html, json
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Dict, List, Tuple
 try:
@@ -77,13 +87,20 @@ except ImportError:
     BS4_AVAILABLE = False
     print("Warning: BeautifulSoup4 not available. Some notebook rendering features may be limited.")
 
-# Parse args
-parser = argparse.ArgumentParser(description='Generate docs from source files')
-parser.add_argument('--debug', action='store_true', help='Enable debug output')
-parser.add_argument('--force-rebuild', action='store_true', help='Force rebuild all HTML files')
-args = parser.parse_args()
-DEBUG = args.debug
-FORCE_REBUILD = args.force_rebuild
+DEBUG = False
+FORCE_REBUILD = False
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser without parsing arguments at import time."""
+    parser = argparse.ArgumentParser(description='Generate docs from source files')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument(
+        '--force-rebuild',
+        action='store_true',
+        help='Force rebuild all HTML files',
+    )
+    return parser
 
 def debug_print(msg):
     """
@@ -270,6 +287,16 @@ TEMPLATE_PATH = REPO_ROOT / '.github' / 'assets' / 'custom_template.html'
 LITERATE_C_SCRIPT = DARCSIT_DIR / 'literate-c'
 BASE_URL = "/"
 CSS_PATH = REPO_ROOT / '.github' / 'assets' / 'css' / 'custom_styles.css'
+BASILISK_RELEASE = 'v2026-05-21'
+BASILISK_INSTALLER_COMMIT = 'b4ed00314418de8240646d2cc0dd7349fe71f802'
+BASILISK_INSTALLER_URL = (
+    'https://raw.githubusercontent.com/comphy-lab/basilisk-C/'
+    f'{BASILISK_INSTALLER_COMMIT}/reset_install_basilisk-ref-locked.sh'
+)
+BASILISK_INSTALLER_SHA256 = (
+    '3916396d2b814a959d6ab449e40b58c1c260d7994df0dae68a75b9a065cd3d36'
+)
+BASILISK_INSTALLER_MAX_BYTES = 1024 * 1024
 
 # Get repository name from directory
 REPO_NAME = REPO_ROOT.name
@@ -326,30 +353,67 @@ def install_basilisk() -> bool:
     """
     Auto-install Basilisk from comphy-lab/basilisk-C at a pinned release.
 
-    Downloads and runs reset_install_basilisk-ref-locked.sh for the stable
-    release pinned by this docs bundle. Cleans up the installer after success.
+    Downloads reset_install_basilisk-ref-locked.sh from an immutable commit,
+    verifies its SHA-256 digest, and invokes it without a command shell. The
+    installer then selects the stable release pinned by this docs bundle.
 
     Returns:
         True if installation succeeded; False otherwise.
     """
     print("Basilisk not found. Installing from comphy-lab/basilisk-C...")
 
-    cmds = [
-        "curl -sLO https://raw.githubusercontent.com/comphy-lab/basilisk-C/v2026-05-21/reset_install_basilisk-ref-locked.sh",
-        "chmod +x reset_install_basilisk-ref-locked.sh",
-        "./reset_install_basilisk-ref-locked.sh --ref=v2026-05-21 --hard"
-    ]
-
-    for cmd in cmds:
-        result = subprocess.run(cmd, shell=True, cwd=REPO_ROOT)
-        if result.returncode != 0:
-            print(f"Failed to install basilisk: {cmd}")
+    install_script = None
+    try:
+        request = urllib.request.Request(
+            BASILISK_INSTALLER_URL,
+            headers={'User-Agent': 'Contact-line-subgrid-modeling-docs'},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            installer = response.read(BASILISK_INSTALLER_MAX_BYTES + 1)
+        if len(installer) > BASILISK_INSTALLER_MAX_BYTES:
+            print("Failed to install Basilisk: installer exceeds size limit")
             return False
 
-    # Clean up install script
-    install_script = REPO_ROOT / "reset_install_basilisk-ref-locked.sh"
-    if install_script.exists():
-        install_script.unlink()
+        actual_sha256 = hashlib.sha256(installer).hexdigest()
+        if actual_sha256 != BASILISK_INSTALLER_SHA256:
+            print(
+                "Failed to install Basilisk: installer SHA-256 mismatch "
+                f"(expected {BASILISK_INSTALLER_SHA256}, got {actual_sha256})"
+            )
+            return False
+
+        with tempfile.NamedTemporaryFile(
+            mode='wb',
+            prefix='basilisk-installer-',
+            suffix='.sh',
+            dir=REPO_ROOT,
+            delete=False,
+        ) as stream:
+            stream.write(installer)
+            install_script = Path(stream.name)
+
+        result = subprocess.run(
+            [
+                'bash',
+                str(install_script),
+                f'--ref={BASILISK_RELEASE}',
+                '--hard',
+            ],
+            cwd=REPO_ROOT,
+            check=False,
+        )
+        if result.returncode != 0:
+            print("Failed to install Basilisk: verified installer returned nonzero")
+            return False
+    except (OSError, urllib.error.URLError) as error:
+        print(f"Failed to install Basilisk: {error}")
+        return False
+    finally:
+        if install_script is not None:
+            try:
+                install_script.unlink(missing_ok=True)
+            except OSError as error:
+                print(f"Warning: could not remove temporary installer: {error}")
 
     print("Basilisk installed successfully.")
     return True
@@ -1866,8 +1930,10 @@ def generate_directory_index(directory_name: str, directory_path: Path, generate
         # Replace main content
         content_replacement = toc_html
         html_content = re.sub(
-            r'<div class="page-content">\s*.*?\$body\$.*?</div>', 
-            f'<div class="page-content">\n{content_replacement}\n</div>', 
+            r'<div class="page-content">\s*.*?\$body\$.*?</div>',
+            lambda _match: (
+                f'<div class="page-content">\n{content_replacement}\n</div>'
+            ),
             html_content, flags=re.DOTALL
         )
         
@@ -2005,10 +2071,12 @@ def generate_index(readme_path: Path, index_path: Path, generated_files: Dict[Pa
             f_out.write(processed_html)
             
     except Exception as e:
-        print(f"Warning: Failed to process code blocks in {index_path}: {e}")
+        print(f"Failed to process code blocks in {index_path}: {e}")
+        return False
 
     # Insert JavaScript
-    insert_javascript_in_html(index_path)
+    if not insert_javascript_in_html(index_path):
+        return False
     
     return True
 
@@ -2359,16 +2427,19 @@ def patch_basilisk_js_assets(docs_assets_js_dir: Path) -> None:
             except Exception as e:
                 print(f"Warning: Could not write {file_path}: {e}")
 
-def main():
+def main() -> int:
     """
     Generates the complete HTML documentation site for the project.
     
     Creates the documentation output directory, optionally cleans existing HTML files if force rebuild is enabled, copies all required assets, processes each supported source file into HTML with appropriate post-processing, generates index pages for directories and the main index from README.md, and creates robots.txt and sitemap.xml for search engines. Also copies additional JavaScript files required for Basilisk integration and cleans up temporary files.
+
+    Returns zero only when every required generation stage succeeds.
     """
     if not validate_config():
-        return
+        return 1
     
     try:
+        failures = 0
         # Create docs directory
         DOCS_DIR.mkdir(exist_ok=True)
         
@@ -2387,13 +2458,13 @@ def main():
         assets_dir = REPO_ROOT / '.github' / 'assets'
         if not copy_assets(assets_dir, DOCS_DIR):
             print("Failed to copy assets.")
-            return
+            return 1
         
         # Find source files
         source_files = find_source_files(REPO_ROOT, SOURCE_DIRS)
         if not source_files:
             print("No source files found.")
-            return
+            return 1
         
         # Dictionary for generated files
         generated_files = {}
@@ -2427,6 +2498,9 @@ def main():
                 DOCS_DIR
             ):
                 generated_files[file_path] = output_html_path
+            else:
+                failures += 1
+                print(f"Failed to generate documentation for {file_path}.")
         
         # Generate folder index pages
         print("\nGenerating folder index pages...")
@@ -2435,23 +2509,23 @@ def main():
             if docs_source_dir.exists():
                 if not generate_directory_index(source_dir, docs_source_dir, generated_files, DOCS_DIR, REPO_ROOT):
                     print(f"Failed to generate index for {source_dir}.")
+                    failures += 1
         
         # Generate main index.html
         print("\nGenerating main index.html...")
         if not generate_index(README_PATH, INDEX_PATH, generated_files, DOCS_DIR, REPO_ROOT):
             print("Failed to generate index.html.")
-            return
+            return 1
         
         # Generate robots.txt and sitemap
         print("\nGenerating robots.txt...")
-        generate_robots_txt(DOCS_DIR)
+        if not generate_robots_txt(DOCS_DIR):
+            failures += 1
         
         print("\nGenerating sitemap...")
-        generate_sitemap(DOCS_DIR, generated_files)
+        if not generate_sitemap(DOCS_DIR, generated_files):
+            failures += 1
         
-        print("\nDocumentation generation complete.")
-        print(f"Output generated in: {DOCS_DIR}")
-
         # Copy Basilisk JS to assets
         js_src_dir = BASILISK_DIR / 'src' / 'darcsit' / 'static' / 'js'
         js_dest_dir = DOCS_DIR / 'assets' / 'js'
@@ -2464,6 +2538,13 @@ def main():
                 print(f"Copied Basilisk JS file {src} to {dst}")
             else:
                 print(f"Warning: Basilisk JS file {src} not found")
+
+        if failures:
+            print(f"Documentation generation failed in {failures} required stage(s).")
+            return 1
+        print("\nDocumentation generation complete.")
+        print(f"Output generated in: {DOCS_DIR}")
+        return 0
         
     finally:
         # Clean up temporary template
@@ -2475,5 +2556,14 @@ def main():
             except Exception as e:
                 print(f"Warning: Could not delete temporary template file: {e}")
 
+def cli(argv=None) -> int:
+    """Parse command-line arguments and return a process exit status."""
+    global DEBUG, FORCE_REBUILD
+    parsed = build_argument_parser().parse_args(argv)
+    DEBUG = parsed.debug
+    FORCE_REBUILD = parsed.force_rebuild
+    return main()
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(cli())

@@ -9,6 +9,28 @@ window.searchHelper = window.searchHelper || {};
 // Store the promise of search database and Fuse creation for memoization
 window.searchHelper.fuseInitPromise = null;
 
+// Resolve search-database destinations without allowing active URL schemes or
+// cross-origin redirects. Search data is refreshed from another repository and
+// must therefore be treated as untrusted input.
+window.searchHelper.resolveNavigationUrl = function(rawUrl) {
+  if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
+    return null;
+  }
+
+  try {
+    const destination = new URL(rawUrl, window.location.href);
+    if (!['http:', 'https:'].includes(destination.protocol)) {
+      return null;
+    }
+    if (destination.origin !== window.location.origin) {
+      return null;
+    }
+    return destination.href;
+  } catch (error) {
+    return null;
+  }
+};
+
 // Initialize the search database and Fuse instance (memoized)
 window.searchHelper.initializeSearchFuse = async function() {
   // If the initialization is already in progress, return the existing promise
@@ -164,6 +186,7 @@ window.searchHelper.searchDatabaseForCommandPalette = async function(query) {
           const rawTitle = typeof result.item.title === 'string' ? result.item.title : 'Untitled';
           const content = result.item.content || '';
           const rawExcerpt = result.item.excerpt || (content && content.substring(0, 100) + '...') || '';
+          const navigationUrl = window.searchHelper.resolveNavigationUrl(result.item.url);
 
           // Sanitize title and excerpt to prevent XSS
           const safeTitle = sanitize(rawTitle);
@@ -173,8 +196,8 @@ window.searchHelper.searchDatabaseForCommandPalette = async function(query) {
             id: `search-result-${result.refIndex}`,
             title: safeTitle,
             handler: () => {
-              if (result.item.url) {
-                window.location.href = result.item.url;
+              if (navigationUrl) {
+                window.location.href = navigationUrl;
               }
             },
             section: "Search Results",
