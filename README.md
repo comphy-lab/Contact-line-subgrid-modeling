@@ -19,9 +19,19 @@ bifurcation diagram $\Delta(\mathrm{Ca})$ of Fig. 4b of Snoeijer & Andreotti,
 continuation against the digitized theory curve and Delon et al. (2008)
 experiments](img/fig4b-reproduction.png)
 
-Continuation of the GLE (in C, this repository; solid black) against the theory
-curve vector-digitized from the paper's PDF (thick grey) and the five
-experimental series of Delon et al. (2008). The saddle-node fold sits at
+Steady contact-line height $z/\ell_\gamma$ versus capillary number for a plate
+withdrawn from a silicone-oil bath: the present GLE continuation (black), the
+review's digitised lubrication theory (thick grey), and the steady-state
+experimental points of Delon et al. (2008) (coloured symbols). Only the symbols
+are digitised: the thin coloured traces in the original review figure are the
+continuously recorded transient elevations of each run, mapped through the
+instantaneous relative capillary number
+$\widetilde{\mathrm{Ca}}(t) = \eta(U_p - \mathrm{d}z_{cl}/\mathrm{d}t)/\gamma$,
+which adiabatically retrace the same steady branch (their wiggle is measurement
+noise, not a guide to the eye). The branch folds at $\mathrm{Ca}^{*}$ where
+$\theta_{\mathrm{app}} \to 0$ and $z_c \to \sqrt{2}\,\ell_\gamma$; beyond
+$\mathrm{Ca}^{*}$ no steady meniscus exists and a film is entrained. The
+saddle-node fold sits at
 $\mathrm{Ca}^{*} = 1.0544\times10^{-2}$ versus $1.054\times10^{-2}$ digitized.
 The slip length is calibrated *to the fold*, so recovering $\mathrm{Ca}^{*}$ is
 circular and is **not** a test. The genuine out-of-sample checks are the fold
@@ -31,6 +41,11 @@ asymptote — which carries no further free parameters. Microscopic parameters:
 $\theta_e = 53.46^{\circ}$, $\lambda/\ell_\gamma = 7.46\times10^{-6}$
 (the digitization provenance is in
 [data/fig4b-digitized/CALIBRATION.md](data/fig4b-digitized/CALIBRATION.md)).
+
+The full methods document — GLE derivation, the two solvers, the calibration,
+and the component-by-component validation — is
+[docs/gle-theory-and-implementation.pdf](docs/gle-theory-and-implementation.pdf)
+(source [docs/gle-theory-and-implementation.tex](docs/gle-theory-and-implementation.tex)).
 
 ## The model
 
@@ -197,6 +212,9 @@ Contact-line-subgrid-modeling
 ├── img - generated figures committed for the README and docs
 │   ├── fig4b-reproduction.png - the headline reproduction figure (also .pdf)
 │   └── c-vs-python.png - the C-vs-Python cross-validation figure
+├── docs - LaTeX methods document
+│   ├── gle-theory-and-implementation.tex - theory, numerics, and validation write-up
+│   └── gle-theory-and-implementation.pdf - the compiled methods document
 ├── _Archive - superseded code kept for provenance (do not resurrect)
 ├── .github - documentation pipeline and website generator
 ├── Makefile - top-level build delegating to gle-ode

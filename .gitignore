@@ -149,6 +149,12 @@ gle-ode/output/
 gle-ode/gle-solve
 gle-ode/gle-continuation
 
+# LaTeX build intermediates (keep the compiled docs/*.pdf)
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.toc
+
 # qcc scratch directories left behind by interrupted/failed builds
 .qcc*/
 

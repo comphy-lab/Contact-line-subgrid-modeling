@@ -102,7 +102,7 @@ ax.plot(branch['Ca'][imax]*1e3, branch['Delta'][imax], 'o', ms=13,
         mfc='white', mec='k', mew=2.5, zorder=5)
 ax.annotate(r'$\mathrm{Ca}^{*}$',
             (branch['Ca'][imax]*1e3, branch['Delta'][imax]),
-            textcoords='offset points', xytext=(14, -2), fontsize=30)
+            textcoords='offset points', xytext=(-14, -2), ha='right', fontsize=30)
 
 # critical meniscus rise sqrt(2) (theta_app -> 0 at the fold)
 ax.axhline(np.sqrt(2.0), color='0.75', lw=1.5, ls=':', zorder=1)
