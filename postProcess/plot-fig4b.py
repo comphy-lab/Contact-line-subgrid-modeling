@@ -81,6 +81,18 @@ SERIES = [
     ("symbols_blue.csv", "tab:blue", "^", "none"),
 ]
 
+# Vector-extracted external targets and acceptance budgets. The fold
+# uncertainties correspond to roughly half a source-figure point in each
+# coordinate. The source polyline is sampled uniformly in each Bezier segment,
+# not in height, so both curves are resampled below onto a fixed 421-height grid.
+# The budgets are fixed from that external comparison, not from another C branch.
+DIGITISED_FOLD_CA = 1.053717e-2
+DIGITISED_FOLD_DELTA = 1.44617
+DIGITISED_FOLD_CA_TOL = 3.0e-5
+DIGITISED_FOLD_DELTA_TOL = 8.0e-3
+THEORY_MAX_CA_ERROR_TOL = 2.2e-4
+THEORY_RMS_CA_ERROR_TOL = 1.1e-4
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
@@ -141,6 +153,111 @@ def refined_fold(branch: np.ndarray) -> tuple[float, float]:
     return float(ca_fold), float(delta0 + x_fold)
 
 
+def validate_branch_coverage(
+    branches: dict[str, np.ndarray], params: dict[str, dict[str, str]]
+) -> None:
+    """Require every continuation to reach its requested upper-branch height."""
+
+    for name, branch in branches.items():
+        requested = float(params[name]["Delta_max"])
+        achieved = float(branch["Delta"].max())
+        if achieved < requested:
+            raise ValueError(
+                f"{name} branch stops at Delta={achieved:.10g}, before "
+                f"the requested Delta_max={requested:.10g}"
+            )
+        refined_fold(branch)
+
+
+def uniform_height_error_metrics(
+    branch_height: np.ndarray,
+    branch_ca: np.ndarray,
+    reference_height: np.ndarray,
+    reference_ca: np.ndarray,
+    sample_count: int,
+) -> tuple[float, float]:
+    """Return maximum and RMS Ca errors on a uniform physical-height grid."""
+
+    if sample_count < 2:
+        raise ValueError("uniform-height comparison needs at least two samples")
+    uniform_height = np.linspace(
+        float(reference_height[0]), float(reference_height[-1]), sample_count
+    )
+    reference_uniform = np.interp(
+        uniform_height, reference_height, reference_ca
+    )
+    branch_uniform = np.interp(uniform_height, branch_height, branch_ca)
+    errors = np.abs(branch_uniform - reference_uniform)
+    return float(errors.max()), float(np.sqrt(np.mean(errors**2)))
+
+
+def validate_external_theory(
+    legacy: np.ndarray, theory: np.ndarray
+) -> dict[str, float]:
+    """Gate the legacy branch against the digitised external theory curve."""
+
+    if theory.size != 421 or not {"Ca", "z_over_lgamma"}.issubset(
+        theory.dtype.names or ()
+    ):
+        raise ValueError("invalid or incomplete 421-point digitised theory curve")
+    if np.any(~np.isfinite(theory["Ca"])) or np.any(
+        ~np.isfinite(theory["z_over_lgamma"])
+    ):
+        raise ValueError("non-finite value in digitised theory curve")
+    if np.any(np.diff(theory["z_over_lgamma"]) <= 0.0):
+        raise ValueError("digitised theory height must increase monotonically")
+
+    digitised_fold_index = int(np.argmax(theory["Ca"]))
+    digitised_fold_ca = float(theory["Ca"][digitised_fold_index])
+    digitised_fold_delta = float(
+        theory["z_over_lgamma"][digitised_fold_index]
+    )
+    if not np.isclose(digitised_fold_ca, DIGITISED_FOLD_CA, atol=5.0e-9, rtol=0.0):
+        raise ValueError("digitised fold Ca differs from its pinned value")
+    if not np.isclose(
+        digitised_fold_delta, DIGITISED_FOLD_DELTA, atol=5.0e-5, rtol=0.0
+    ):
+        raise ValueError("digitised fold height differs from its pinned value")
+
+    legacy_fold_ca, legacy_fold_delta = refined_fold(legacy)
+    if abs(legacy_fold_ca - DIGITISED_FOLD_CA) > DIGITISED_FOLD_CA_TOL:
+        raise ValueError(
+            "legacy fold Ca misses the external digitised target: "
+            f"|delta|={abs(legacy_fold_ca - DIGITISED_FOLD_CA):.6e}"
+        )
+    if abs(legacy_fold_delta - DIGITISED_FOLD_DELTA) > DIGITISED_FOLD_DELTA_TOL:
+        raise ValueError(
+            "legacy fold height misses the external digitised target: "
+            f"|delta|={abs(legacy_fold_delta - DIGITISED_FOLD_DELTA):.6e}"
+        )
+
+    source_height = theory["z_over_lgamma"]
+    if (
+        float(source_height.min()) < float(legacy["Delta"].min())
+        or float(source_height.max()) > float(legacy["Delta"].max())
+    ):
+        raise ValueError("legacy branch does not cover the full digitised height range")
+
+    # The vector extraction contains 60 samples per Bezier segment, whose
+    # heights are deliberately nonuniform. Compare on a uniform physical-height
+    # grid so dense parts of the drawing cannot dominate the RMS.
+    max_error, rms_error = uniform_height_error_metrics(
+        legacy["Delta"], legacy["Ca"], source_height, theory["Ca"], theory.size
+    )
+    if max_error > THEORY_MAX_CA_ERROR_TOL or rms_error > THEORY_RMS_CA_ERROR_TOL:
+        raise ValueError(
+            "legacy branch misses the external theory-curve budget: "
+            f"max={max_error:.6e} (limit {THEORY_MAX_CA_ERROR_TOL:.6e}), "
+            f"rms={rms_error:.6e} (limit {THEORY_RMS_CA_ERROR_TOL:.6e})"
+        )
+    return {
+        "fold_ca": legacy_fold_ca,
+        "fold_delta": legacy_fold_delta,
+        "max_ca_error": max_error,
+        "rms_ca_error": rms_error,
+    }
+
+
 def save_both(fig: plt.Figure, base: Path) -> None:
     base.parent.mkdir(parents=True, exist_ok=True)
     for suffix in (".pdf", ".png"):
@@ -165,6 +282,7 @@ def plot_reproduction(
     output_dir: Path,
 ) -> None:
     theory = np.genfromtxt(DIGI / "theory_curve.csv", delimiter=",", names=True)
+    external = validate_external_theory(branches["legacy"], theory)
     fig, ax = plt.subplots(figsize=(10, 12))
 
     ax.plot(
@@ -281,6 +399,12 @@ def plot_reproduction(
             f"  {name:18s} slip={slip:.9e} "
             f"fold_Ca={ca_fold:.10e} fold_Delta={delta_fold:.10e}"
         )
+    print(
+        "  external theory gate "
+        f"max|Delta Ca|={external['max_ca_error']:.6e} "
+        f"rms={external['rms_ca_error']:.6e} "
+        f"over 421 uniform-height samples"
+    )
 
 
 def plot_common_slip_comparison(
@@ -389,6 +513,7 @@ def main() -> None:
     params = {
         name: load_params(PARAMS / filename) for name, filename in PARAM_FILES.items()
     }
+    validate_branch_coverage(branches, params)
     plot_reproduction(branches, params, args.output_dir)
     plot_common_slip_comparison(branches, params, args.output_dir)
     print(f"wrote {args.output_dir / 'fig4b-reproduction'}.pdf and .png")

@@ -54,9 +54,11 @@ runs to $\\sim 5\\times10^{7}$, while $\\mathrm{d}\\omega(s_{\\max})/\\mathrm{d}
 \\approx 1$. A shooting residual tolerance of $5\\times10^{-8}$ therefore admits
 a few degrees of slack in $\\theta(s_{\\max})$. Agreement is consequently
 excellent where the problem is well conditioned ($s \\lesssim 10^{4}$, relative
-error $< 3\\times10^{-4}$) and degrades monotonically towards the cap. This is a
-property of the boundary-value problem, not of either implementation — the two
-right-hand sides agree to machine precision.
+error below the enforced $2.3\\times10^{-4}$ limit) and degrades monotonically
+towards the cap. The automated gate also requires the thickness error below
+$5\\times10^{-4}$ and the apparent-angle difference below $10^{-3}$ degrees.
+This is a property of the boundary-value problem, not of either implementation
+— the two right-hand sides agree to machine precision.
 
 ## Usage
 
@@ -87,6 +89,9 @@ import matplotlib.pyplot as plt
 WINDOW = (2.0, 0.5e6)     # s-range for the reported error metrics
 S_APPARENT = 1.0e4        # apparent-angle probe (0.01 * l_cap)
 QUICK_NGRID = 200_000     # capped mesh for --quick (CI-speed) runs
+THETA_MAX_TOL = 2.3e-4    # documented well-conditioned profile threshold
+H_MAX_TOL = 5.0e-4
+APP_DIFF_DEG_TOL = 1.0e-3
 
 
 def find_repo_root() -> Path:
@@ -128,7 +133,14 @@ def run_python(gle, quick: bool):
         gle.N_grid = min(gle.N_grid, QUICK_NGRID)
     print(f"[python] N_grid = {gle.N_grid:,}  (quick={quick})")
     with tempfile.TemporaryDirectory() as tmp:
-        _, s, h, theta, _ = gle.run_solver_and_plot(GUI=False, output_dir=tmp)
+        solution, s, h, theta, _ = gle.run_solver_and_plot(
+            GUI=False, output_dir=tmp
+        )
+    if not solution.success:
+        raise RuntimeError(
+            "SciPy solve_bvp reference failed: "
+            f"status={solution.status}, message={solution.message}"
+        )
     return np.asarray(s), np.asarray(h), np.asarray(theta)
 
 
@@ -203,6 +215,28 @@ def compute_metrics(s_c, h_c, th_c, s_py, h_py, th_py):
     }
 
 
+def validate_metrics(metrics):
+    """Reject an incomplete or materially divergent C/Python comparison."""
+
+    numeric = [value for key, value in metrics.items() if key != "n"]
+    failures = []
+    if metrics["n"] < 2:
+        failures.append("comparison window contains fewer than two C nodes")
+    if not np.all(np.isfinite(numeric)):
+        failures.append("comparison produced a non-finite metric")
+    for key, tolerance in (
+        ("theta_max", THETA_MAX_TOL),
+        ("h_max", H_MAX_TOL),
+        ("app_diff_deg", APP_DIFF_DEG_TOL),
+    ):
+        if metrics[key] > tolerance:
+            failures.append(
+                f"{key}={metrics[key]:.6e} exceeds {tolerance:.6e}"
+            )
+    if failures:
+        raise RuntimeError("C/Python validation failed: " + "; ".join(failures))
+
+
 def make_figure(out_png, s_c, h_c, th_c, s_py, h_py, th_py, m):
     """Two-panel publication-style comparison figure."""
     # The Python reference calls plt.style.use('seaborn-...') as a side effect;
@@ -269,7 +303,7 @@ def make_figure(out_png, s_c, h_c, th_c, s_py, h_py, th_py, m):
     print(f"[figure] wrote {out_png}")
 
 
-def main():
+def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--quick", action="store_true",
                     help=f"cap Python N_grid at {QUICK_NGRID:,} for CI-speed runs")
@@ -293,9 +327,17 @@ def main():
     print(f"  C  = {m['app_c_deg']:.6f} deg   Python = {m['app_py_deg']:.6f} deg")
     print(f"  |diff| = {m['app_diff_deg']:.3e} deg  (rel {m['app_rel']:.3e})")
 
+    validate_metrics(m)
+    print(
+        "validation: PASS "
+        f"(theta_max <= {THETA_MAX_TOL:g}, h_max <= {H_MAX_TOL:g}, "
+        f"apparent-angle difference <= {APP_DIFF_DEG_TOL:g} deg)"
+    )
+
     make_figure(repo / "img" / "c-vs-python.png",
                 s_c, h_c, th_c, s_py, h_py, th_py, m)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

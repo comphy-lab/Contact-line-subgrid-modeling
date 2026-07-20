@@ -48,7 +48,7 @@ $h_{\mathrm{film}} = \sqrt{3\,\mathrm{Ca}}\,\ell_\gamma$.
 The gravity term is
 $$G(\theta) = -\,g^{*}\cos\theta \quad \text{(vertical plate)}, \qquad
   G(\theta) = +\,g^{*}\sin\theta \quad \text{(horizontal plate)},$$
-with $g^{*} = (\ell_\gamma/\ell_{\mathrm{unit}})^2$ stored in `grav`
+with $g^{*} = (\ell_{\mathrm{unit}}/\ell_\gamma)^2$ stored in `grav`
 ($g^{*} = 1$ in capillary-length units, $0$ disables gravity). In the
 vertical-plate geometry, $s$ runs from the contact line *down* towards the
 bath, so $z(s) = \Delta - \zeta(s)$ and the static far field obeys the

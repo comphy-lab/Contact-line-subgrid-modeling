@@ -24,6 +24,12 @@ export OPENBLAS_NUM_THREADS="$plot_threads"
 export OMP_NUM_THREADS="$plot_threads"
 export VECLIB_MAXIMUM_THREADS="$plot_threads"
 
+if ! command -v uv >/dev/null 2>&1; then
+  echo "error: uv is required to regenerate and validate the Figure 4b plots" >&2
+  echo "install uv from https://docs.astral.sh/uv/ and rerun this script" >&2
+  exit 2
+fi
+
 echo "==> Building gle-ode"
 make -C "$REPO_ROOT/gle-ode"
 
@@ -56,15 +62,20 @@ trace_branch "fixed-slip Chan/Scott branch" \
 trace_branch "fixed-slip direct Luo--Gao branch" \
   fig4b-luo-gao-common-slip.params fig4b-luo-gao-common-slip-branch.csv
 
-if command -v uv >/dev/null 2>&1; then
-  echo "==> Plotting reproduction and model comparisons"
-  (cd "$REPO_ROOT" && uv run postProcess/plot-fig4b.py)
-  (cd "$REPO_ROOT" && uv run postProcess/plot-finite-m-closure-comparison.py)
-else
-  echo "==> uv not found - to plot the figures, run:"
-  echo "    uv run postProcess/plot-fig4b.py"
-  echo "    uv run postProcess/plot-finite-m-closure-comparison.py"
-fi
+echo "==> Plotting reproduction and model comparisons"
+(cd "$REPO_ROOT" && uv run postProcess/test-plot-fig4b.py)
+(cd "$REPO_ROOT" && uv run postProcess/plot-fig4b.py)
+(cd "$REPO_ROOT" && uv run postProcess/plot-finite-m-closure-comparison.py)
+
+for figure in \
+  fig4b-reproduction.png fig4b-reproduction.pdf \
+  fig4b-model-comparison.png fig4b-model-comparison.pdf \
+  finite-m-closure-comparison.png finite-m-closure-comparison.pdf; do
+  if [[ ! -s "$REPO_ROOT/img/$figure" ]]; then
+    echo "error: plotting did not produce img/$figure" >&2
+    exit 1
+  fi
+done
 
 echo
 echo "Produced:"

@@ -69,12 +69,15 @@ either solver:
 2. `sh tests/verify-reference-table.sh` — the frozen one- and two-phase
    reference data, independent checkpoints, interpolation audit, and emitted C
    headers must reproduce from their public generators.
-3. `./reproduce-fig4b.sh` — the fold must land within tolerance of
-   $\mathrm{Ca}^{*} = 1.0544\times10^{-2}$ (fold height $\Delta^{*} = 1.440$ is
-   the out-of-sample check, not fit to).
+3. `./reproduce-fig4b.sh` — every branch must reach its requested upper height;
+   the legacy fold must lie within the digitisation uncertainty of
+   $\mathrm{Ca}^{*} = 1.053717\times10^{-2}$ and $\Delta^{*}=1.44617$; and the
+   421-height external theory-curve comparison must satisfy maximum
+   $|\Delta\mathrm{Ca}|<2.2\times10^{-4}$ and RMS $<1.1\times10^{-4}$.
 4. `uv run postProcess/compare-c-python.py --quick` — C vs Python mobility to
-   machine precision, profile agreement $< 2.3\times10^{-4}$ in the
-   well-conditioned window.
+   machine precision; maximum angle and thickness errors below
+   $2.3\times10^{-4}$ and $5\times10^{-4}$ in the well-conditioned window;
+   apparent-angle difference below $10^{-3}$ degrees.
 5. Gravity-rescaling invariance:
    ```bash
    cd gle-ode

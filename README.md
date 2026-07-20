@@ -36,8 +36,13 @@ values are $\lambda/\ell_\gamma=7.46\times10^{-6}$ (legacy),
 $8.8078\times10^{-6}$ (Chan--Scott--Hocking), and $8.48805\times10^{-6}$
 (direct Luo--Gao). The out-of-sample fold heights are respectively 1.43908,
 1.43907 and 1.43919, versus 1.446 digitised; the full branch shape is the other
-check. None of these fitted effective lengths is an independently measured
-Navier slip length. Digitisation and calibration provenance are recorded in
+check. The reproduction command now resamples the external digitised theory
+curve and the generated branch onto 421 uniformly spaced heights: the legacy
+branch has maximum $|\Delta\mathrm{Ca}|=2.012\times10^{-4}$ and RMS
+$1.044\times10^{-4}$, within fixed budgets, and every generated branch must
+reach its requested upper-branch height. None of these fitted effective lengths
+is an independently measured Navier slip length. Digitisation and calibration
+provenance are recorded in
 [data/fig4b-digitized/CALIBRATION.md](data/fig4b-digitized/CALIBRATION.md).
 
 ![Chan and direct Luo–Gao branches at the same microscopic slip
@@ -45,10 +50,13 @@ length](img/fig4b-model-comparison.png)
 
 The separate equal-input comparison fixes
 $\lambda/\ell_\gamma=7.46\times10^{-6}$ in both equations and performs no
-refit. The direct Luo--Gao fold is then 0.41690% above the reference-matched
-Chan fold. This is the full formulation difference that independent
-calibration would hide; it includes both the models' matching constants and
-their different local viscous terms.
+refit. With the implemented finite start $s_0=\lambda$, the direct Luo--Gao
+fold is 0.41690% above the reference-matched Chan fold. This number is not
+cutoff-independent: matched sweeps at $s_0/\lambda=0.1$, 0.01 and 0.001 give
+0.6289%, 0.6819% and 0.6903%, respectively. The robust conclusion is that the
+model-form shift is sub-percent for this case. The comparison includes both
+models' matching constants, different local viscous terms and their common
+finite-start convention; no finite-$s_0$ inner correction is applied.
 
 The full methods document — GLE derivation, the two solvers, the calibration,
 and the component-by-component validation — is
@@ -217,11 +225,12 @@ SciPy collocation. Driver:
 | Inner-Stokes $Q$ generator | 270 converged nodes; max node sensitivity $5.65\times10^{-4}$ |
 | Frozen $Q$ interpolation | 234 independent cell centres; max $|\Delta Q|=3.90\times10^{-4}$, propagated budget $1.84\times10^{-3}$ |
 | Corrected right-angle cutoff | one-phase analytic anchor and viscosity-inversion symmetry |
-| Interface profile $\theta(s)$, well-conditioned window | rel. error $< 2.3\times10^{-4}$ |
-| Apparent-angle difference at $s = 10^4$ (`--quick`, post tolerance fix) | $5\times10^{-4}$ deg |
+| Interface angle $\theta(s)$, well-conditioned window | max rel. error $2.74\times10^{-5}$; limit $2.3\times10^{-4}$ |
+| Interface thickness $h(s)$, well-conditioned window | max rel. error $3.96\times10^{-5}$; limit $5\times10^{-4}$ |
+| Apparent-angle difference at $s = 10^4$ (`--quick`) | $5.30\times10^{-4}$ deg; limit $10^{-3}$ deg |
 | Gravity-rescaling invariance ($g^{*}$ rescaled) | $4.5\times10^{-6}$ |
-| Static ($\mathrm{Ca}\to 0$) limit | exact |
-| Fig. 4b branch overlay | see above |
+| Static ($\mathrm{Ca}\to 0$) limit | finite-$s_0$ value $0.626995031426$ versus contact-line value $0.626990589862$; offset $s_0\cos\theta_e=4.44\times10^{-6}$ |
+| Fig. 4b external theory curve | max $|\Delta\mathrm{Ca}|=2.012\times10^{-4}$; RMS $1.044\times10^{-4}$ over 421 uniform heights |
 
 The Fig. 4b study separates calibration from comparison. The legacy effective
 $\lambda$ is fitted to the digitised fold; each new model is fitted to the

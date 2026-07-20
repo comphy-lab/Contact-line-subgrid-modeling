@@ -6,8 +6,9 @@
 # receding equilibrium angle. The two microscopic parameters are
 # CALIBRATED against the vector-digitized theory curve of the figure
 # (data/fig4b-digitized/), not independently measured:
-#   theta_mic_deg = 53.46  fixed by the static foot Delta(Ca->0) =
-#                          sqrt(2(1 - sin(theta_e))) = 0.627;
+#   theta_mic_deg = 53.46  fixed by the contact-line static foot
+#                          sqrt(2(1 - sin(theta_e))) = 0.627. The finite
+#                          start used below adds s0*cos(theta_e) = 4.44e-6;
 #   c_slip = 3             reproduces the legacy small-angle cutoff used by
 #                          the 2013 review curve;
 #   slip = 7.46e-6         fixed by the digitized fold Ca* = 10.54e-3. The fold

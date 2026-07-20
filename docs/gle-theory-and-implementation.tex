@@ -210,7 +210,7 @@ Gravity enters through
   G(\theta) = -\,g^{*}\cos\theta \quad\text{(vertical plate)}, \qquad
   G(\theta) = +\,g^{*}\sin\theta \quad\text{(horizontal plate)},
 \end{equation}
-with $g^{*} = (\lgamma/\ell_{\mathrm{unit}})^{2}$ the gravity prefactor:
+with $g^{*} = (\ell_{\mathrm{unit}}/\lgamma)^{2}$ the gravity prefactor:
 $g^{*} = 1$ when lengths are measured in capillary lengths, and $g^{*} = 0$
 disables gravity (the length unit is then free). Retaining $g^{*}$ as a general
 scaling rather than fixing it to unity makes the gravity-rescaling invariance
@@ -410,7 +410,9 @@ against the vector-digitised theory curve of Fig.~4b of Snoeijer \&
 Andreotti~\cite{snoeijer2013}, not measured independently:
 \begin{itemize}
   \item $\theta_e = 53.46^{\circ}$, fixed by the static foot
-    $\Delta(\Ca \to 0) = \sqrt{2(1 - \sin\theta_e)} = 0.627$;
+    $\Delta(\Ca \to 0) = \sqrt{2(1 - \sin\theta_e)} = 0.627$ at the
+    contact line. The implemented boundary starts at finite $s_0$ and adds
+    $s_0\cos\theta_e$, a $4.44\times10^{-6}$ offset for the default case;
   \item $\lambda/\lgamma = 7.46\times10^{-6}$, fixed by the digitised fold
     $\Ca^{*} = 10.54\times10^{-3}$. The prediction is only logarithmically
     sensitive to $\lambda$, so the fold calibration absorbs the chosen
@@ -424,6 +426,14 @@ out-of-sample checks are the fold height $\Delta^{*} = 1.440$ (digitised
 $1.446$, not fit to) and the full branch shape, including the upper-branch
 approach to the Landau--Levich asymptote, which carries no further free
 parameters.
+
+The one-shot reproduction additionally enforces an external branch-shape
+gate. Resampling the legacy branch and independently digitised theory curve
+onto 421 uniformly spaced heights gives maximum
+$|\Delta\Ca|=2.012\times10^{-4}$ and RMS $1.044\times10^{-4}$, below fixed
+budgets of $2.2\times10^{-4}$ and $1.1\times10^{-4}$. Every generated branch
+must also reach its requested upper-branch height, so a truncated continuation
+cannot pass this gate.
 
 The legacy $c_{\lambda}=3$ reproduction is retained as provenance. Its
 effective slip was calibrated to the digitised fold at the reported resolution.
@@ -638,7 +648,12 @@ at identical input $(\lambda,\theta_e,\mur)$ exposes differences that the
 independent fits would hide. This is the total formulation difference,
 including the models' distinct matching constants and local viscous terms;
 agreement of effective matching constants alone would still not guarantee
-identical Fig.~4b branches.
+identical Fig.~4b branches. At the implemented $s_0/\lambda=1$, the common-input
+fold shift is $0.41690\%$. Matched starts at $s_0/\lambda=0.1$, $0.01$ and
+$0.001$ give $0.6289\%$, $0.6819\%$ and $0.6903\%$, respectively. Thus the
+sub-percent conclusion is stable, while the single $0.41690\%$ value is
+specific to the finite-start convention; no common finite-$s_0$ inner
+correction is included.
 
 \paragraph{Mobility.}
 The two-fluid mobility~\eqref{eq:mobility} agrees with the Python reference to
@@ -660,7 +675,10 @@ which supplied it.
 \paragraph{Interface profile.}
 Against the historical SciPy \texttt{solve\_bvp} reference solving the
 identical boundary-value problem, the interface angle $\theta(s)$ agrees to a
-relative error below $2.3\times10^{-4}$ throughout the well-conditioned window.
+relative error below the enforced $2.3\times10^{-4}$ limit throughout the
+well-conditioned window. The automated gate also requires the thickness error
+below $5\times10^{-4}$ and the apparent-angle difference below $10^{-3}$
+degrees.
 The far field is a genuinely soft condition: the gain
 $\dd\theta(10^{6})/\dd\omega_0 \sim 5\times10^{7}$, so the two solutions may
 drift apart in $\theta$ at very large $s$ even though the two right-hand sides
@@ -703,8 +721,15 @@ $4.5\times10^{-6}$, a direct test that the general $g^{*}$ scaling is carried
 consistently through both solvers.
 
 \paragraph{Static limit.}
-The $\Ca \to 0$ limit reproduces the static meniscus exactly, as it must, since
-the outer condition~\eqref{eq:outer} is the static first integral.
+The $\Ca \to 0$ solve reproduces the static invariant for its implemented
+finite-$s_0$ boundary. The computed and contact-line values are
+\[
+  \Delta_{s_0}=0.626995031426, \qquad
+  \Delta_{\mathrm{cl}}=0.626990589862.
+\]
+Their $4.44\times10^{-6}$ difference is the geometric offset
+$s_0\cos\theta_e$. A regression checks the shifted value, so the small offset
+is explicit rather than hidden by an ``exact'' claim.
 
 \medskip
 Figure~\ref{fig:fig4b} shows the independently calibrated branches overlaid on
@@ -752,8 +777,11 @@ C-versus-Python cross-validation.
   Left: the Chan equation with the Scott--Hocking closure and the direct
   Luo--Gao equation. Right: their relative capillary-number difference at
   equal meniscus rise. The direct Luo--Gao fold is $0.41690\%$ above the Chan
-  fold for this common input; the difference includes both the matching
-  constants and the local viscous terms.}
+  fold for this common input and the implemented $s_0=\lambda$ start. Matched
+  $s_0/\lambda$ refinement approaches a $0.690\%$ shift, so the robust result
+  is sub-percent rather than the cutoff-specific headline value. The
+  difference includes both the matching constants and the local viscous
+  terms.}
   \label{fig:fig4b-models}
 \end{figure}
 
