@@ -16,6 +16,13 @@ cc -O2 -std=c99 -Wall -Wextra -Werror -pedantic -I../src-local \
 
 #include <math.h>
 #include <stdio.h>
+
+/* Exercise the strict-C99 path even on libc implementations that expose
+   M_PI by default. gle-model.h must supply the guarded fallback. */
+#ifdef M_PI
+# undef M_PI
+#endif
+
 #include "gle-params.h"
 #include "gle-collocate.h"
 

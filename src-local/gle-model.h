@@ -82,6 +82,18 @@ Last updated: Jul 20, 2026
 #include <stddef.h>
 
 /**
+## Portable circle constant
+
+ISO C99 does not require `<math.h>` to expose `M_PI`; glibc hides it in strict
+language modes unless a feature-test macro is enabled. Define the conventional
+macro only when the host library does not, so the public headers remain usable
+with an unextended `-std=c99` compiler.
+*/
+#ifndef M_PI
+# define M_PI 3.14159265358979323846264338327950288
+#endif
+
+/**
 ## Geometry selector
 */
 enum gle_geometry {
