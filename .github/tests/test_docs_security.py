@@ -3,9 +3,11 @@
 
 import hashlib
 import importlib.util
+import io
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import textwrap
 import unittest
@@ -44,52 +46,150 @@ class FakeResponse:
         return self.payload
 
 
-class InstallerTests(unittest.TestCase):
-    def test_installer_rejects_hash_mismatch_before_execution(self):
-        with mock.patch.object(
-            GENERATOR.urllib.request,
-            "urlopen",
-            return_value=FakeResponse(b"untrusted installer"),
-        ), mock.patch.object(GENERATOR.subprocess, "run") as run:
-            self.assertFalse(GENERATOR.install_basilisk())
-        run.assert_not_called()
+def make_tar_gz(files):
+    """Return a gzip-compressed tar containing the given name/content pairs."""
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as bundle:
+        for name, content in files.items():
+            data = content.encode("utf-8")
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            bundle.addfile(member, io.BytesIO(data))
+    return stream.getvalue()
 
-    def test_verified_installer_uses_argument_vector_without_shell(self):
-        payload = b"#!/bin/bash\nexit 0\n"
-        expected_hash = hashlib.sha256(payload).hexdigest()
+
+def make_link_tar_gz(name, target, link_type):
+    """Return a gzip-compressed tar containing one link member."""
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as bundle:
+        member = tarfile.TarInfo(name)
+        member.type = link_type
+        member.linkname = target
+        bundle.addfile(member)
+    return stream.getvalue()
+
+
+class ArchiveInstallTests(unittest.TestCase):
+    def _patch_paths(self, temporary):
+        root = Path(temporary)
+        return (
+            mock.patch.object(GENERATOR, "REPO_ROOT", root),
+            mock.patch.object(GENERATOR, "BASILISK_DIR", root / "basilisk"),
+        )
+
+    def test_archive_rejects_hash_mismatch_before_build(self):
         with tempfile.TemporaryDirectory() as temporary:
-            with mock.patch.object(GENERATOR, "REPO_ROOT", Path(temporary)), \
-                 mock.patch.object(
-                     GENERATOR, "BASILISK_INSTALLER_SHA256", expected_hash
-                 ), \
-                 mock.patch.object(
-                     GENERATOR.urllib.request,
-                     "urlopen",
-                     return_value=FakeResponse(payload),
-                 ), \
-                 mock.patch.object(
-                     GENERATOR.subprocess,
-                     "run",
-                     return_value=subprocess.CompletedProcess([], 0),
-                 ) as run:
+            path_patch, basilisk_patch = self._patch_paths(temporary)
+            with path_patch, basilisk_patch, mock.patch.object(
+                GENERATOR.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(b"untrusted archive"),
+            ), mock.patch.object(GENERATOR.subprocess, "run") as run:
+                self.assertFalse(GENERATOR.install_basilisk())
+            run.assert_not_called()
+            self.assertFalse((Path(temporary) / "basilisk").exists())
+
+    def test_verified_archive_builds_only_literate_c_without_shell(self):
+        payload = make_tar_gz(
+            {"basilisk/src/darcsit/Makefile": "literate-c:\n\t@true\n"}
+        )
+        expected_hash = hashlib.sha256(payload).hexdigest()
+
+        def make_literate_c(arguments, **_keywords):
+            darcsit = Path(arguments[2])
+            executable = darcsit / "literate-c"
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            executable.chmod(0o755)
+            return subprocess.CompletedProcess(arguments, 0)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path_patch, basilisk_patch = self._patch_paths(temporary)
+            with path_patch, basilisk_patch, mock.patch.object(
+                GENERATOR,
+                "BASILISK_ARCHIVES",
+                {sys.platform: ("test.tar.gz", expected_hash)},
+            ), mock.patch.object(
+                GENERATOR.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(payload),
+            ) as open_url, mock.patch.object(
+                GENERATOR.subprocess,
+                "run",
+                side_effect=make_literate_c,
+            ) as run:
                 self.assertTrue(GENERATOR.install_basilisk())
 
-            arguments, keywords = run.call_args
-            self.assertEqual(arguments[0][0], "bash")
+            request = open_url.call_args.args[0]
             self.assertEqual(
-                arguments[0][2:],
-                [f"--ref={GENERATOR.BASILISK_RELEASE}", "--hard"],
+                request.full_url,
+                "https://github.com/comphy-lab/basilisk-C/releases/download/"
+                f"{GENERATOR.BASILISK_RELEASE}/test.tar.gz",
             )
+            arguments, keywords = run.call_args
+            self.assertEqual(arguments[0][0], "make")
+            self.assertEqual(arguments[0][1], "-C")
+            self.assertEqual(arguments[0][-1], "literate-c")
             self.assertFalse(keywords.get("shell", False))
-            self.assertEqual(list(Path(temporary).iterdir()), [])
+            self.assertTrue(
+                (Path(temporary) / "basilisk/src/darcsit/literate-c").is_file()
+            )
 
-    def test_installer_source_is_commit_and_digest_pinned(self):
-        self.assertRegex(GENERATOR.BASILISK_INSTALLER_COMMIT, r"^[0-9a-f]{40}$")
-        self.assertIn(
-            f"/{GENERATOR.BASILISK_INSTALLER_COMMIT}/",
-            GENERATOR.BASILISK_INSTALLER_URL,
+    def test_archive_rejects_traversal_before_build(self):
+        payload = make_tar_gz({"../escape": "nope"})
+        expected_hash = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            path_patch, basilisk_patch = self._patch_paths(temporary)
+            with path_patch, basilisk_patch, mock.patch.object(
+                GENERATOR,
+                "BASILISK_ARCHIVES",
+                {sys.platform: ("test.tar.gz", expected_hash)},
+            ), mock.patch.object(
+                GENERATOR.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(payload),
+            ), mock.patch.object(GENERATOR.subprocess, "run") as run:
+                self.assertFalse(GENERATOR.install_basilisk())
+            run.assert_not_called()
+            self.assertFalse((Path(temporary) / "escape").exists())
+
+    def test_archive_rejects_links_before_build(self):
+        for link_type in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+            with self.subTest(link_type=link_type), tempfile.TemporaryDirectory() as temporary:
+                payload = make_link_tar_gz(
+                    "basilisk/src/darcsit/escape", "../../escape", link_type
+                )
+                expected_hash = hashlib.sha256(payload).hexdigest()
+                path_patch, basilisk_patch = self._patch_paths(temporary)
+                with path_patch, basilisk_patch, mock.patch.object(
+                    GENERATOR,
+                    "BASILISK_ARCHIVES",
+                    {sys.platform: ("test.tar.gz", expected_hash)},
+                ), mock.patch.object(
+                    GENERATOR.urllib.request,
+                    "urlopen",
+                    return_value=FakeResponse(payload),
+                ), mock.patch.object(GENERATOR.subprocess, "run") as run:
+                    self.assertFalse(GENERATOR.install_basilisk())
+                run.assert_not_called()
+
+    def test_release_archives_are_digest_pinned(self):
+        self.assertRegex(GENERATOR.BASILISK_RELEASE, r"^v[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+        self.assertEqual(
+            GENERATOR.BASILISK_ARCHIVES,
+            {
+                "linux": (
+                    "basilisk-linux.tar.gz",
+                    "be22c168121b04f9ad42e1cee960bfc7989870f37e03f2e1e83340fb3ee2e8d3",
+                ),
+                "darwin": (
+                    "basilisk-mac.tar.gz",
+                    "5632ff26da923a7029733a990b658e55fbdc11434e118132cfb63e3adf675e95",
+                ),
+            },
         )
-        self.assertRegex(GENERATOR.BASILISK_INSTALLER_SHA256, r"^[0-9a-f]{64}$")
+        for archive_name, digest in GENERATOR.BASILISK_ARCHIVES.values():
+            self.assertRegex(archive_name, r"^basilisk-(linux|mac)\.tar\.gz$")
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
 
 
 class GeneratorExitTests(unittest.TestCase):

@@ -62,12 +62,15 @@ import ast
 import argparse
 import hashlib
 import html
+import io
 import inspect
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.request
@@ -288,15 +291,17 @@ LITERATE_C_SCRIPT = DARCSIT_DIR / 'literate-c'
 BASE_URL = "/"
 CSS_PATH = REPO_ROOT / '.github' / 'assets' / 'css' / 'custom_styles.css'
 BASILISK_RELEASE = 'v2026-05-21'
-BASILISK_INSTALLER_COMMIT = 'b4ed00314418de8240646d2cc0dd7349fe71f802'
-BASILISK_INSTALLER_URL = (
-    'https://raw.githubusercontent.com/comphy-lab/basilisk-C/'
-    f'{BASILISK_INSTALLER_COMMIT}/reset_install_basilisk-ref-locked.sh'
-)
-BASILISK_INSTALLER_SHA256 = (
-    '3916396d2b814a959d6ab449e40b58c1c260d7994df0dae68a75b9a065cd3d36'
-)
-BASILISK_INSTALLER_MAX_BYTES = 1024 * 1024
+BASILISK_ARCHIVES = {
+    'linux': (
+        'basilisk-linux.tar.gz',
+        'be22c168121b04f9ad42e1cee960bfc7989870f37e03f2e1e83340fb3ee2e8d3',
+    ),
+    'darwin': (
+        'basilisk-mac.tar.gz',
+        '5632ff26da923a7029733a990b658e55fbdc11434e118132cfb63e3adf675e95',
+    ),
+}
+BASILISK_ARCHIVE_MAX_BYTES = 32 * 1024 * 1024
 
 # Get repository name from directory
 REPO_NAME = REPO_ROOT.name
@@ -349,71 +354,104 @@ def process_template_for_assets(template_path: Path) -> str:
         print(f"Error processing template: {e}")
         return ""
 
+def _is_within(path: Path, root: Path) -> bool:
+    """Return whether *path* is contained by *root*."""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _extract_basilisk_archive(archive: bytes, destination: Path) -> None:
+    """Extract a verified Basilisk archive without accepting unsafe members."""
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(archive), mode='r:gz') as bundle:
+        members = bundle.getmembers()
+        for member in members:
+            target = destination / member.name
+            if not _is_within(target, destination):
+                raise ValueError(f"unsafe archive path: {member.name}")
+            if member.issym() or member.islnk():
+                raise ValueError(f"archive links are not allowed: {member.name}")
+            if member.isdev() or member.isfifo():
+                raise ValueError(f"unsafe archive member: {member.name}")
+        bundle.extractall(destination, members=members)
+
+
 def install_basilisk() -> bool:
     """
     Auto-install Basilisk from comphy-lab/basilisk-C at a pinned release.
 
-    Downloads reset_install_basilisk-ref-locked.sh from an immutable commit,
-    verifies its SHA-256 digest, and invokes it without a command shell. The
-    installer then selects the stable release pinned by this docs bundle.
+    Downloads the platform archive for the release pinned by this docs bundle,
+    verifies its SHA-256 digest before extraction, and builds only the
+    ``literate-c`` documentation tool.
 
     Returns:
         True if installation succeeded; False otherwise.
     """
     print("Basilisk not found. Installing from comphy-lab/basilisk-C...")
 
-    install_script = None
     try:
+        archive_spec = BASILISK_ARCHIVES.get(sys.platform)
+        if archive_spec is None:
+            print(f"Failed to install Basilisk: unsupported platform {sys.platform}")
+            return False
+        archive_name, expected_sha256 = archive_spec
+        archive_url = (
+            'https://github.com/comphy-lab/basilisk-C/releases/download/'
+            f'{BASILISK_RELEASE}/{archive_name}'
+        )
         request = urllib.request.Request(
-            BASILISK_INSTALLER_URL,
+            archive_url,
             headers={'User-Agent': 'Contact-line-subgrid-modeling-docs'},
         )
         with urllib.request.urlopen(request, timeout=30) as response:
-            installer = response.read(BASILISK_INSTALLER_MAX_BYTES + 1)
-        if len(installer) > BASILISK_INSTALLER_MAX_BYTES:
-            print("Failed to install Basilisk: installer exceeds size limit")
+            archive = response.read(BASILISK_ARCHIVE_MAX_BYTES + 1)
+        if len(archive) > BASILISK_ARCHIVE_MAX_BYTES:
+            print("Failed to install Basilisk: archive exceeds size limit")
             return False
 
-        actual_sha256 = hashlib.sha256(installer).hexdigest()
-        if actual_sha256 != BASILISK_INSTALLER_SHA256:
+        actual_sha256 = hashlib.sha256(archive).hexdigest()
+        if actual_sha256 != expected_sha256:
             print(
-                "Failed to install Basilisk: installer SHA-256 mismatch "
-                f"(expected {BASILISK_INSTALLER_SHA256}, got {actual_sha256})"
+                "Failed to install Basilisk: archive SHA-256 mismatch "
+                f"(expected {expected_sha256}, got {actual_sha256})"
             )
             return False
 
-        with tempfile.NamedTemporaryFile(
-            mode='wb',
-            prefix='basilisk-installer-',
-            suffix='.sh',
-            dir=REPO_ROOT,
-            delete=False,
-        ) as stream:
-            stream.write(installer)
-            install_script = Path(stream.name)
+        with tempfile.TemporaryDirectory(
+            prefix='basilisk-docs-', dir=REPO_ROOT
+        ) as temporary:
+            extraction_root = Path(temporary) / 'extract'
+            _extract_basilisk_archive(archive, extraction_root)
+            candidate = extraction_root / 'basilisk'
+            candidate_darcsit = candidate / 'src' / 'darcsit'
+            if not candidate_darcsit.is_dir():
+                print("Failed to install Basilisk: archive layout is invalid")
+                return False
 
-        result = subprocess.run(
-            [
-                'bash',
-                str(install_script),
-                f'--ref={BASILISK_RELEASE}',
-                '--hard',
-            ],
-            cwd=REPO_ROOT,
-            check=False,
-        )
-        if result.returncode != 0:
-            print("Failed to install Basilisk: verified installer returned nonzero")
-            return False
-    except (OSError, urllib.error.URLError) as error:
+            result = subprocess.run(
+                ['make', '-C', str(candidate_darcsit), 'literate-c'],
+                cwd=REPO_ROOT,
+                check=False,
+            )
+            if result.returncode != 0:
+                print("Failed to install Basilisk: literate-c build returned nonzero")
+                return False
+            candidate_literate_c = candidate_darcsit / 'literate-c'
+            if not candidate_literate_c.is_file() or not os.access(
+                candidate_literate_c, os.X_OK
+            ):
+                print("Failed to install Basilisk: executable literate-c was not produced")
+                return False
+
+            if BASILISK_DIR.exists():
+                shutil.rmtree(BASILISK_DIR)
+            shutil.move(str(candidate), str(BASILISK_DIR))
+    except (OSError, tarfile.TarError, urllib.error.URLError, ValueError) as error:
         print(f"Failed to install Basilisk: {error}")
         return False
-    finally:
-        if install_script is not None:
-            try:
-                install_script.unlink(missing_ok=True)
-            except OSError as error:
-                print(f"Warning: could not remove temporary installer: {error}")
 
     print("Basilisk installed successfully.")
     return True
