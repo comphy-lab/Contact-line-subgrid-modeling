@@ -161,7 +161,9 @@ static inline int gle_integrate (const GLEParams *p, double *s, double y[4],
 	return GLE_ERR_DOMAIN;
       continue;
     }
-    if (err > 1.0) {                     /* reject: shrink */
+    if (!(err <= 1.0)) {                 /* reject: shrink (this also
+					     rejects NaN error norms, which
+					     fail every ordinary comparison) */
       ds *= fmax (0.2, 0.9*pow (err, -0.2));
       if (ds < 1e-15*fmax (*s, 1.0))
 	return GLE_ERR_STEPSIZE;

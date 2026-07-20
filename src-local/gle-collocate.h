@@ -43,9 +43,10 @@ Boundary and closure conditions:
 
 - $h_0 = h_0^{\mathrm{bc}}$, $\theta_0 = \theta_e$,
   $\zeta_0 = s_0\cos\theta_e$ (contact line);
-- $\omega_N = \sqrt{2(1 - \sin\theta_N)}$ (static-meniscus manifold);
+- $\omega_N = \sqrt{2 g^{*}(1 - \sin\theta_N)}$ (static-meniscus manifold,
+  general gravity prefactor $g^{*}$);
 - $h_N = H_{\mathrm{match}}$ (defines $s_{\mathrm{end}}$);
-- $\zeta_N + \omega_N = \Delta^{*}$ (the target meniscus rise).
+- $\zeta_N + \omega_N/g^{*} = \Delta^{*}$ (the target meniscus rise).
 
 Unknowns: $4(N{+}1)$ node states $+\;\mathrm{Ca}\;+\;s_{\mathrm{end}}$;
 equations: $4N$ collocation $+\,6$ conditions. Square.
@@ -283,7 +284,12 @@ static inline void gle_colloc_band_residual (const GLECollocation *c,
     for (int k = 0; k < 4; k++)
       ym[k] = 0.5*(y[4*i + k] + y[4*(i + 1) + k]);
     if (gle_rhs (p, ym, fm)) {
-      /* out-of-domain midpoint: large smooth penalty steers Newton back */
+      /* out-of-domain midpoint: large smooth penalty steers Newton back.
+	 NOTE: this constant +/-1e3 residual deliberately mismatches the
+	 assembled Jacobian row below (which is built from the local RHS
+	 finite differences, not this penalty) -- it is only a damped-Newton
+	 steering heuristic, not a consistent residual/Jacobian pair
+	 (reviewed and accepted). */
       for (int k = 0; k < 4; k++)
 	res[3 + 4*i + k] = 1.0e3*(ym[1] < 0.5*p->theta_mic ? -1.0 : 1.0);
       continue;
@@ -291,7 +297,7 @@ static inline void gle_colloc_band_residual (const GLECollocation *c,
     for (int k = 0; k < 4; k++)
       res[3 + 4*i + k] = y[4*(i + 1) + k] - y[4*i + k] - ds*fm[k];
   }
-  res[4*N + 3] = y[4*N + 2] - gle_static_curvature (y[4*N + 1]);
+  res[4*N + 3] = y[4*N + 2] - gle_static_curvature (y[4*N + 1], p->grav);
 }
 
 static inline void gle_colloc_border_residual (const GLECollocation *c,
@@ -300,9 +306,8 @@ static inline void gle_colloc_border_residual (const GLECollocation *c,
 					       double Delta_target,
 					       double rb[2]) {
   int N = c->N;
-  (void) p;
   rb[0] = y[4*N + 0] - p->H_match;
-  rb[1] = y[4*N + 3] + y[4*N + 2] - Delta_target;
+  rb[1] = y[4*N + 3] + y[4*N + 2]/p->grav - Delta_target;
 }
 
 /**
@@ -366,9 +371,11 @@ static inline void gle_colloc_assemble (GLECollocation *c, GLEParams *p,
   /* far-field manifold row */
   *gle_band_at (&c->band, n - 1, 4*N + 2) = 1.0;
   *gle_band_at (&c->band, n - 1, 4*N + 1) =
-    -(-cos (c->y[4*N + 1]))/fmax (gle_static_curvature (c->y[4*N + 1]),
-				  1.0e-12);
-  /* d/dtheta sqrt(2(1-sin th)) = -cos th / sqrt(2(1-sin th)) */
+    p->grav*cos (c->y[4*N + 1])/fmax (gle_static_curvature (c->y[4*N + 1],
+							     p->grav),
+				      1.0e-12);
+  /* R = omega_N - sqrt(2 g (1 - sin th)), so
+     dR/dtheta_N = + g*cos(th) / sqrt(2 g (1 - sin th)) */
 
   /* border columns: full-residual FD in Ca and s_end */
   double dCa = 1.0e-7*fmax (fabs (p->Ca), 1.0e-6);
@@ -402,8 +409,8 @@ algorithm reduces to a $2\times2$ solve; this helper evaluates
 $\mathbf{b}^{T} x$ for a border row on a full-length vector.
 */
 static inline double gle_colloc_border_dot (int which, int N,
-					    const double *x) {
-  return which == 0 ? x[4*N + 0] : x[4*N + 2] + x[4*N + 3];
+					    const double *x, double grav) {
+  return which == 0 ? x[4*N + 0] : x[4*N + 2]/grav + x[4*N + 3];
 }
 
 /**
@@ -432,7 +439,7 @@ static inline int gle_colloc_solve (GLECollocation *c, GLEParams *p,
       rnorm = fmax (rnorm, fabs (c->res[i]));
     rnorm = fmax (rnorm, fmax (fabs (rb[0]), fabs (rb[1])));
     if (rnorm < tol) {
-      c->Delta = c->y[4*N + 3] + c->y[4*N + 2];
+      c->Delta = c->y[4*N + 3] + c->y[4*N + 2]/p->grav;
       if (iters_out)
 	*iters_out = it;
       return 0;
@@ -458,12 +465,12 @@ static inline int gle_colloc_solve (GLECollocation *c, GLEParams *p,
        border row k: b_k.dx + rbX_k dCa + rbS_k dS = -rb_k
                 => (rbCa_k - b_k.xc) dCa + (rbS_k - b_k.xs) dS
                    = -rb_k + b_k.xr                                       */
-    double M00 = rbCa[0] - gle_colloc_border_dot (0, N, xc);
-    double M01 = rbS[0] - gle_colloc_border_dot (0, N, xs);
-    double M10 = rbCa[1] - gle_colloc_border_dot (1, N, xc);
-    double M11 = rbS[1] - gle_colloc_border_dot (1, N, xs);
-    double q0 = -rb[0] + gle_colloc_border_dot (0, N, xr);
-    double q1 = -rb[1] + gle_colloc_border_dot (1, N, xr);
+    double M00 = rbCa[0] - gle_colloc_border_dot (0, N, xc, p->grav);
+    double M01 = rbS[0] - gle_colloc_border_dot (0, N, xs, p->grav);
+    double M10 = rbCa[1] - gle_colloc_border_dot (1, N, xc, p->grav);
+    double M11 = rbS[1] - gle_colloc_border_dot (1, N, xs, p->grav);
+    double q0 = -rb[0] + gle_colloc_border_dot (0, N, xr, p->grav);
+    double q1 = -rb[1] + gle_colloc_border_dot (1, N, xr, p->grav);
     double det = M00*M11 - M01*M10;
     if (!isfinite (det) || fabs (det) < 1.0e-300)
       return 1;
@@ -525,10 +532,25 @@ typedef struct {
 
 static void gle_seed_sampler (void *ctx, double s, const double y[4]) {
   gle_seed_buf *b = (gle_seed_buf *) ctx;
+  if (b->n < 0)
+    return;                    /* buffer already marked failed */
   if (b->n == b->cap) {
-    b->cap = b->cap ? 2*b->cap : 16384;
-    b->s = (double *) realloc (b->s, b->cap*sizeof (double));
-    b->y4 = (double *) realloc (b->y4, 4*b->cap*sizeof (double));
+    long newcap = b->cap ? 2*b->cap : 16384;
+    double *ns = (double *) realloc (b->s, newcap*sizeof (double));
+    double *ny4 = (double *) realloc (b->y4, 4*newcap*sizeof (double));
+    /* commit whichever reallocations succeeded first, so neither valid
+       block is ever leaked, then bail out if either one failed */
+    if (ns) b->s = ns;
+    if (ny4) b->y4 = ny4;
+    if (!ns || !ny4) {
+      free (b->s);
+      free (b->y4);
+      b->s = NULL;
+      b->y4 = NULL;
+      b->n = -1;               /* mark failed; callers already handle n < 2 */
+      return;
+    }
+    b->cap = newcap;
   }
   b->s[b->n] = s;
   for (int k = 0; k < 4; k++)
@@ -595,13 +617,15 @@ The number of accepted branch points.
 */
 static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
 				    double Delta_max, double dDelta0,
+				    double dDelta_cap,
 				    int max_points, FILE *csv,
 				    double *fold_Ca, double *fold_Delta,
 				    int verbose) {
   int N = c->N, n = 4*N + 4;
   int npts = 0;
   double dD = dDelta0;
-  const double dD_min = 1.0e-7, dD_max = 0.05;
+  const double dD_min = 1.0e-7;
+  const double dD_max = (dDelta_cap > 0.0 ? dDelta_cap : 0.05);
 
   double *y_good = (double *) malloc (n*sizeof (double));
   double *y_prev = (double *) malloc (n*sizeof (double));
@@ -611,7 +635,7 @@ static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
   }
 
   /* consistency solve at the seed's own Delta */
-  double D = c->y[4*N + 3] + c->y[4*N + 2];
+  double D = c->y[4*N + 3] + c->y[4*N + 2]/p->grav;
   int iters;
   if (gle_colloc_solve (c, p, D, &iters)) {
     if (verbose)
@@ -635,9 +659,9 @@ static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
     for (int i = 1; i <= N; i++)					\
       if (c->y[4*i + 1] < th_min)					\
 	th_min = c->y[4*i + 1];						\
-    double sa = 1.0 - 0.5*c->Delta*c->Delta;				\
+    double sa = 1.0 - 0.5*p->grav*c->Delta*c->Delta;			\
     double th_app = (fabs (sa) <= 1.0 ? asin (sa) : NAN);		\
-    if (hist_D) {							\
+    if (hist_D && hist_Ca) {						\
       hist_D[npts] = c->Delta;						\
       hist_Ca[npts] = c->Ca;						\
     }									\
@@ -702,7 +726,7 @@ static inline int gle_colloc_march (GLECollocation *c, GLEParams *p,
 
   /* fold refinement: quadratic vertex of Ca(Delta) around the history
      maximum */
-  if ((fold_Ca || fold_Delta) && hist_D && npts >= 3) {
+  if ((fold_Ca || fold_Delta) && hist_D && hist_Ca && npts >= 3) {
     int im = 0;
     for (int i = 1; i < npts; i++)
       if (hist_Ca[i] > hist_Ca[im])

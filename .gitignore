@@ -149,6 +149,9 @@ gle-only/output/
 gle-only/gle-solve
 gle-only/gle-continuation
 
+# qcc scratch directories left behind by interrupted/failed builds
+.qcc*/
+
 # Basilisk simulationCases run artifacts
 simulationCases/*.tst
 simulationCases/_*

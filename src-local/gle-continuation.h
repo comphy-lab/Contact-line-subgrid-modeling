@@ -9,6 +9,15 @@ with a saddle-node at $\mathrm{Ca}^{*}$ (where $\theta_{\mathrm{app}} \to 0$
 and $\Delta \to \sqrt{2}$) and an upper branch approaching the critical
 Landau–Levich speed as $\Delta \to \infty$.
 
+> **Superseded for branch tracing.** [gle-collocate.h](gle-collocate.h) is
+> now the branch-tracing workhorse (see its header for why). Near the fold,
+> the $(\omega_0, \mathrm{Ca})$ chart this routine walks is genuinely
+> degenerate, and the shooting-based march below can silently *retrace the
+> lower branch* instead of crossing onto the upper one, rather than failing
+> loudly. This routine is retained for provenance and for lower-branch-only
+> use (fast scans well away from the fold); it is not safe for tracing a
+> branch through the fold.
+
 ## Method: secant predictor + local-parameterization corrector
 
 Because [gle-shoot.h](gle-shoot.h) reduces the BVP to a **single scalar
@@ -159,6 +168,11 @@ failure).
 static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
 				    GLEBranchPoint *branch, FILE *csv,
 				    double *fold_Ca, double *fold_Delta) {
+  if (opts->max_points < 2)
+    return 0;                 /* branch[] has no room for the two natural-
+				  continuation seed points pushed below;
+				  bail out before writing past its end
+				  (confirmed heap overflow otherwise) */
   int n = 0;
   GLESolution sol;
 
@@ -167,7 +181,7 @@ static inline int gle_continuation (GLEParams *p, const GLEContOpts *opts,
 
   /* --- point 0: natural solve at Ca_start --- */
   p->Ca = opts->Ca_start;
-  double w_guess = gle_static_curvature (p->theta_mic);
+  double w_guess = gle_static_curvature (p->theta_mic, p->grav);
   if (gle_shoot (p, w_guess, &sol)) {
     if (opts->verbose)
       fprintf (stderr, "gle_continuation: failed at Ca_start = %g\n",

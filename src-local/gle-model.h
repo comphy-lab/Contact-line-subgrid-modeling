@@ -108,9 +108,19 @@ All physical and numerical parameters of a GLE boundary-value problem.
   $s_0 \sin\theta_e$).
 - `H_match`: film thickness at which the outer boundary condition is applied.
 - `smax_cap`: hard cap on total arc length (safety for lost trajectories).
+- `outer_bc`: `GLE_OUTER_STATIC_MENISCUS` (default; dip-coating bath
+  matching at $h = H_{\mathrm{match}}$) or `GLE_OUTER_OMEGA_ZERO`
+  ($\omega(s_{\mathrm{max}}) = 0$ imposed at $s = $ `smax_cap`, replicating
+  the far-field condition of the historical `GLE_solver.py` for
+  cross-validation).
 - `rtol`, `atol`: relative/absolute local error tolerances of the integrator.
 - `max_steps`: integrator step budget per trajectory.
 */
+enum gle_outer_bc {
+  GLE_OUTER_STATIC_MENISCUS = 0,
+  GLE_OUTER_OMEGA_ZERO = 1
+};
+
 typedef struct {
   double Ca;
   double mu_r;
@@ -123,6 +133,7 @@ typedef struct {
   double h0;
   double H_match;
   double smax_cap;
+  int outer_bc;
 
   double rtol;
   double atol;
@@ -147,6 +158,7 @@ static inline GLEParams gle_default_params (void) {
   p.h0 = -1.0;         /* default: s0*sin(theta_mic) */
   p.H_match = 5.0;
   p.smax_cap = 100.0;
+  p.outer_bc = GLE_OUTER_STATIC_MENISCUS;
   p.rtol = 1.0e-10;
   p.atol = 1.0e-12;
   p.max_steps = 2000000;
@@ -174,14 +186,14 @@ cancellation for small arguments ($f_1 \sim \theta^4/3$, $f_2 \sim
 2\theta^3/3$), so both switch to Taylor series below $\theta = 0.02$:
 
 $$f_1 = \frac{\theta^4}{3}\left(1 - \frac{2\theta^2}{15}
-        + \frac{\theta^4}{189}\right) + \mathcal{O}(\theta^{10}), \qquad
+        + \frac{\theta^4}{105}\right) + \mathcal{O}(\theta^{10}), \qquad
   f_2 = \frac{2\theta^3}{3}\left(1 - \frac{\theta^2}{5}
         + \frac{2\theta^4}{105}\right) + \mathcal{O}(\theta^{9}).$$
 */
 static inline double gle_f1 (double th) {
   if (fabs (th) < 0.02) {
     double t2 = th*th;
-    return t2*t2/3.0*(1.0 - 2.0*t2/15.0 + t2*t2/189.0);
+    return t2*t2/3.0*(1.0 - 2.0*t2/15.0 + t2*t2/105.0);
   }
   double sth = sin (th);
   return th*th - sth*sth;
@@ -210,29 +222,46 @@ $2\sin^3\theta/[3f_2(\theta)]$ is used directly (it is also the exact
 $\mu_r \to 0$ limit of the general form). $M \to 1$ as $\theta \to 0$.
 
 #### Parameters
-- `th`: interface angle $\theta$ (radians), $0 < \theta < \pi$.
+- `th`: interface angle $\theta$ (radians).
 - `mu_r`: gas/liquid viscosity ratio.
 
-Negative angles are handled by the **even extension** $M(\theta) =
-M(|\theta|)$, with $M(0) = 1$: on the upper branch of the dip-coating
-problem, the film joins the meniscus through an *oscillatory* tail in which
-$\theta$ legitimately dips slightly below zero (the classical dimple
-oscillations of Landau–Levich-type films). There $|\theta| \ll 1$ and the
-even extension is exactly the classical-lubrication limit; the one-fluid
-$M(\theta) = 2\sin^3\theta/[3f_2(\theta)]$ is even in $\theta$ analytically.
+Negative angles occur on the upper branch of the dip-coating problem, where
+the film joins the meniscus through an *oscillatory* tail in which $\theta$
+legitimately dips slightly below zero (the classical dimple oscillations of
+Landau–Levich-type films). In the **one-fluid limit** ($\mu_r = 0$),
+$M(\theta) = 2\sin^3\theta/[3f_2(\theta)]$ is even in $\theta$ analytically,
+so negative angles are handled by the exact **even extension** $M(\theta) =
+M(|\theta|)$, $M(0) = 1$. For $\mu_r > 0$, $M$ is *not* even: it carries a
+genuine linear term $3\,\mu_r\,\theta/(2\pi)$ near $\theta = 0$, so the raw
+two-fluid formula is evaluated directly at the **signed** $\theta$ (the
+apparent $0/0$ at $\theta = 0$ is removable and handled explicitly there);
+$M \to 1$ as $\theta \to 0$ either way.
 
 #### Returns
-$M(\theta,\mu_r)$, or `NAN` if $|\theta| \ge \pi$.
+$M(\theta,\mu_r)$, or `NAN` outside the valid domain ($\theta \ge \pi$ in the
+one-fluid limit; $\theta \le -\pi/2$ or $\theta \ge \pi$ for $\mu_r > 0$).
 */
 static inline double gle_mobility (double th, double mu_r) {
-  th = fabs (th);
-  if (th >= M_PI)
+  if (mu_r == 0.0) {
+    /* one-fluid limit: M is analytically even in theta, so the classical
+       even extension applies exactly. */
+    double ta = fabs (th);
+    if (ta >= M_PI)
+      return NAN;
+    if (ta == 0.0)
+      return 1.0;
+    double sth = sin (ta);
+    return 2.0*sth*sth*sth/(3.0*gle_f2 (ta));
+  }
+  /* two-fluid: M has a genuine linear term 3*mu_r*theta/(2*pi) near
+     theta = 0, so it is NOT even in theta -- evaluate the raw (smooth)
+     formula at the signed theta directly; the apparent 0/0 at theta = 0 is
+     removable. */
+  if (th <= -0.5*M_PI || th >= M_PI)
     return NAN;
   if (th == 0.0)
     return 1.0;
   double sth = sin (th);
-  if (mu_r == 0.0)
-    return 2.0*sth*sth*sth/(3.0*gle_f2 (th));
   double num = 2.0*sth*sth*sth*
     (mu_r*mu_r*gle_f1 (th) + 2.0*mu_r*gle_f3 (th) + gle_f1 (M_PI - th));
   double den = 3.0*
@@ -274,23 +303,31 @@ static inline int gle_rhs (const GLEParams *p, const double y[4],
 /**
 ### gle_static_curvature()
 
-The first integral of the *static* vertical-plate meniscus. Static solutions
-($\mathrm{Ca}=0$, vertical plate, capillary-length units) conserve
-$\omega^2/2 + \sin\theta$; the branch connected to a flat bath
+The first integral of the *static* vertical-plate meniscus, at general
+gravity prefactor $g^{*}$ (the model's `grav` field). Static solutions
+($\mathrm{Ca}=0$, vertical plate) conserve the invariant
+$\omega^2/2 + g^{*}\sin\theta$; the branch connected to a flat bath
 ($\omega \to 0$, $\theta \to \pi/2$) therefore satisfies
 
-$$\omega = \sqrt{2\,(1 - \sin\theta)}.$$
+$$\omega = \sqrt{2\,g^{*}\,(1 - \sin\theta)}.$$
 
-This is used as the outer boundary condition of the dip-coating problem: at
-$h = H_{\mathrm{match}}$ the viscous term has decayed like
-$3\,\mathrm{Ca}\,M/h$ and the trajectory must have landed on the static
-meniscus manifold. It is also the classical meniscus-rise relation $\Delta =
+The hydrostatic balance on this branch is $\omega = g^{*} z$ (recovering the
+familiar $\omega = z$ in capillary-length units, $g^{*} = 1$). This is used
+as the outer boundary condition of the dip-coating problem: at $h =
+H_{\mathrm{match}}$ the viscous term has decayed like $3\,\mathrm{Ca}\,M/h$
+and the trajectory must have landed on the static meniscus manifold. It is
+also the classical meniscus-rise relation $\Delta =
 \sqrt{2(1-\sin\theta_{\mathrm{app}})}$ (Landau & Lifshitz 1984), Eq. (4) of
-Snoeijer & Andreotti (2013).
+Snoeijer & Andreotti (2013), at $g^{*} = 1$.
+
+#### Parameters
+- `th`: interface angle $\theta$ (radians).
+- `grav`: gravity prefactor $g^{*}$ (the model's `grav` field; $\le 0$
+  disables gravity and returns $0$).
 */
-static inline double gle_static_curvature (double th) {
+static inline double gle_static_curvature (double th, double grav) {
   double one_m = 1.0 - sin (th);
-  return (one_m > 0.0 ? sqrt (2.0*one_m) : 0.0);
+  return (one_m > 0.0 && grav > 0.0 ? sqrt (2.0*grav*one_m) : 0.0);
 }
 
 #endif /* GLE_MODEL_H */

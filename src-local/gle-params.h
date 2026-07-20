@@ -27,19 +27,62 @@ Last updated: Jul 20, 2026
 #include "gle-continuation.h"
 
 /**
+### gle_bad_numeric()
+
+Reports a value that failed to parse as a number, and returns `1` so the
+caller treats the key as *recognised but ignored* rather than unknown (an
+unparsable value should not also trigger a spurious "unknown key" warning).
+The assignment is skipped: `gle_kv_apply()`'s caller simply keeps whatever
+default or earlier value the field already held.
+*/
+static int gle_bad_numeric (const char *val, const char *key) {
+  fprintf (stderr, "gle-params: bad numeric value '%s' for key '%s'\n",
+	   val, key);
+  return 1;
+}
+
+/**
+### gle_parse_long()
+
+Strict integer parse of `val` via `strtol()` with an `endptr` check (the
+whole string must be consumed, and at least one digit must have been read).
+
+#### Returns
+`1` and writes `*out` on success, `0` on a malformed value.
+*/
+static int gle_parse_long (const char *val, long *out) {
+  char *endp;
+  long v = strtol (val, &endp, 10);
+  if (endp == val || *endp != '\0')
+    return 0;
+  *out = v;
+  return 1;
+}
+
+/**
 ### gle_kv_apply()
 
 Applies one `key=value` pair to the parameter structs. Unknown keys warn on
 `stderr` (they do not abort: parameter files may be shared between drivers).
+Numeric values are parsed with `strtod()`/`strtol()` and checked against
+`endptr`; a value that does not fully parse (e.g. `Ca=abc`) is reported via
+`gle_bad_numeric()` and the assignment is skipped, but the key still counts
+as recognised (see `gle_bad_numeric()`).
 
 #### Returns
 `1` if the key was recognised, `0` otherwise.
 */
 static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
 			 const char *val) {
-  double x = atof (val);
-#define GLE_KEY(name, target)			\
-  if (!strcmp (key, name)) { target = x; return 1; }
+  char *endp;
+  double x = strtod (val, &endp);
+  int x_ok = (endp != val && *endp == '\0');
+#define GLE_KEY(name, target)						\
+  if (!strcmp (key, name)) {						\
+    if (!x_ok) return gle_bad_numeric (val, key);			\
+    target = x;								\
+    return 1;								\
+  }
   GLE_KEY ("Ca", p->Ca);
   GLE_KEY ("mu_r", p->mu_r);
   GLE_KEY ("slip", p->slip);
@@ -52,6 +95,8 @@ static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
   GLE_KEY ("atol", p->atol);
 #undef GLE_KEY
   if (!strcmp (key, "theta_mic_deg")) {
+    if (!x_ok)
+      return gle_bad_numeric (val, key);
     p->theta_mic = x*M_PI/180.0;
     return 1;
   }
@@ -61,13 +106,26 @@ static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
     else fprintf (stderr, "gle-params: unknown geometry '%s'\n", val);
     return 1;
   }
+  if (!strcmp (key, "outer_bc")) {
+    if (!strcmp (val, "manifold")) p->outer_bc = GLE_OUTER_STATIC_MENISCUS;
+    else if (!strcmp (val, "omega_zero")) p->outer_bc = GLE_OUTER_OMEGA_ZERO;
+    else fprintf (stderr, "gle-params: unknown outer_bc '%s'\n", val);
+    return 1;
+  }
   if (!strcmp (key, "max_steps")) {
-    p->max_steps = atol (val);
+    long v;
+    if (!gle_parse_long (val, &v))
+      return gle_bad_numeric (val, key);
+    p->max_steps = v;
     return 1;
   }
   if (o) {
-#define GLE_KEY_O(name, target)			\
-    if (!strcmp (key, name)) { target = x; return 1; }
+#define GLE_KEY_O(name, target)					\
+    if (!strcmp (key, name)) {						\
+      if (!x_ok) return gle_bad_numeric (val, key);			\
+      target = x;							\
+      return 1;								\
+    }
     GLE_KEY_O ("Ca_start", o->Ca_start);
     GLE_KEY_O ("alpha0", o->alpha0);
     GLE_KEY_O ("alpha_min", o->alpha_min);
@@ -76,11 +134,17 @@ static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
     GLE_KEY_O ("Ca_stop_min", o->Ca_stop_min);
 #undef GLE_KEY_O
     if (!strcmp (key, "max_points")) {
-      o->max_points = atoi (val);
+      long v;
+      if (!gle_parse_long (val, &v))
+	return gle_bad_numeric (val, key);
+      o->max_points = (int) v;
       return 1;
     }
     if (!strcmp (key, "verbose")) {
-      o->verbose = atoi (val);
+      long v;
+      if (!gle_parse_long (val, &v))
+	return gle_bad_numeric (val, key);
+      o->verbose = (int) v;
       return 1;
     }
   }

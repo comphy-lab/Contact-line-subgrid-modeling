@@ -23,7 +23,7 @@ monotone along the whole branch, so the fold needs no special handling
 ```
 
 Driver-specific keys: `branch_out` (CSV path, default `gle-branch.csv`),
-`mesh_N` (collocation cells, default 1200), `dDelta` (initial march step in
+`mesh_N` (collocation cells, default 2500), `dDelta` (initial march step in
 $\Delta$, default $2\times10^{-3}$).
 
 On completion the fold $(\mathrm{Ca}^{*}, \Delta^{*})$ and the last computed
@@ -47,8 +47,9 @@ int main (int argc, char *argv[]) {
   GLEParams p = gle_default_params ();
   GLEContOpts opts = gle_default_cont_opts ();
   const char *out_path = "gle-branch.csv";
-  int mesh_N = 1200;
+  int mesh_N = 2500;
   double dDelta0 = 2.0e-3;
+  double dDelta_cap = 0.02;
 
   for (int i = 1; i < argc; i++) {
     if (!strncmp (argv[i], "branch_out=", 11)) {
@@ -61,6 +62,10 @@ int main (int argc, char *argv[]) {
     }
     else if (!strncmp (argv[i], "dDelta=", 7)) {
       dDelta0 = atof (argv[i] + 7);
+      argv[i] = (char *) "";
+    }
+    else if (!strncmp (argv[i], "dDelta_max=", 11)) {
+      dDelta_cap = atof (argv[i] + 11);
       argv[i] = (char *) "";
     }
   }
@@ -79,7 +84,7 @@ int main (int argc, char *argv[]) {
   /* --- seed: shooting solve on the quasi-static lower branch --- */
   GLESolution sol;
   p.Ca = opts.Ca_start;
-  if (gle_shoot (&p, gle_static_curvature (p.theta_mic), &sol)) {
+  if (gle_shoot (&p, gle_static_curvature (p.theta_mic, p.grav), &sol)) {
     fprintf (stderr, "gle-continuation: seeding shot failed at Ca = %g\n",
 	     p.Ca);
     return 1;
@@ -104,7 +109,7 @@ int main (int argc, char *argv[]) {
   gle_branch_csv_header (csv);
 
   double fold_Ca = NAN, fold_Delta = NAN;
-  int n = gle_colloc_march (&c, &p, opts.Delta_max, dDelta0,
+  int n = gle_colloc_march (&c, &p, opts.Delta_max, dDelta0, dDelta_cap,
 			    opts.max_points, csv, &fold_Ca, &fold_Delta,
 			    opts.verbose);
   fclose (csv);

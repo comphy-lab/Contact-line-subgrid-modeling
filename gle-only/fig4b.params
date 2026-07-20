@@ -2,14 +2,29 @@
 # Snoeijer & Andreotti, Annu. Rev. Fluid Mech. 45 (2013).
 #
 # Receding plate withdrawn from a silicone-oil bath (Delon et al. 2008):
-# lengths in units of the capillary length l_gamma; slip of order two
-# molecular sizes; microscopic angle = receding equilibrium angle.
-# theta_mic_deg is set so that the static limit Delta(Ca->0) =
-# sqrt(2(1 - sin(theta_e))) matches the digitized curve foot (z ~ 0.627).
+# lengths in units of the capillary length l_gamma; microscopic angle =
+# receding equilibrium angle. The two microscopic parameters are
+# CALIBRATED against the vector-digitized theory curve of the figure
+# (data/fig4b-digitized/), not independently measured:
+#   theta_mic_deg = 53.46  fixed by the static foot Delta(Ca->0) =
+#                          sqrt(2(1 - sin(theta_e))) = 0.627;
+#   slip = 7.46e-6         fixed by the digitized fold Ca* = 10.54e-3 (the
+#                          prediction is logarithmically sensitive to slip,
+#                          so this absorbs the O(1) microscopic-cutoff
+#                          choices; it corresponds to ~11 nm for silicone
+#                          oil, l_gamma ~ 1.5 mm).
+#
+# Because slip is calibrated directly to Ca*, reproducing Ca* back out of
+# the traced branch is NOT a test -- it is circular by construction. The
+# genuine out-of-sample checks are: the fold HEIGHT Delta* = 1.440 vs 1.446
+# digitized (0.4%, not fit to), and the full branch shape -- including the
+# upper-branch approach to the Landau-Levich asymptote -- which involves no
+# further free parameters (see img/fig4b-reproduction.png and
+# postProcess/compare-c-python.py).
 
 geometry = vertical
-theta_mic_deg = 53.0
-slip = 1.0e-6
+theta_mic_deg = 53.46
+slip = 7.46e-6
 mu_r = 0.0
 grav = 1.0
 

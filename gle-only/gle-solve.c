@@ -22,6 +22,17 @@ curvature).
 Output columns: `s,h,theta_deg,omega,z` with $z = \Delta - \zeta(s)$ the
 elevation above the bath.
 
+## Limitations
+
+Single shooting from the static seed is reliable for $\mathrm{Ca}$ up to
+roughly $0.6\,\mathrm{Ca}^{*}$ on the lower branch. Near the fold, the
+residual window in $\omega_0$ becomes exponentially narrow (see
+[src-local/gle-shoot.h](../src-local/gle-shoot.h)), and this driver's single-
+point Newton/bracket/bisection search can fail to converge or even bracket a
+root at all. Use `gle-continuation` (fixed-mesh collocation, no fold issue)
+to trace branches through the fold, or pass `omega0_guess=` seeded from a
+nearby converged solve.
+
 ## Author
 Vatsal Sanjay
 Email: vatsal.sanjay@comphy-lab.org
@@ -47,13 +58,31 @@ typedef struct {
 
 static void profile_sampler (void *ctx, double s, const double y[4]) {
   profile_buf *b = (profile_buf *) ctx;
+  if (b->n < 0)
+    return;                    /* buffer already marked failed */
   if (b->n == b->cap) {
-    b->cap = b->cap ? 2*b->cap : 65536;
-    b->s = (double *) realloc (b->s, b->cap*sizeof (double));
-    b->hf = (double *) realloc (b->hf, b->cap*sizeof (double));
-    b->th = (double *) realloc (b->th, b->cap*sizeof (double));
-    b->om = (double *) realloc (b->om, b->cap*sizeof (double));
-    b->zt = (double *) realloc (b->zt, b->cap*sizeof (double));
+    long newcap = b->cap ? 2*b->cap : 65536;
+    double *ns  = (double *) realloc (b->s,  newcap*sizeof (double));
+    double *nhf = (double *) realloc (b->hf, newcap*sizeof (double));
+    double *nth = (double *) realloc (b->th, newcap*sizeof (double));
+    double *nom = (double *) realloc (b->om, newcap*sizeof (double));
+    double *nzt = (double *) realloc (b->zt, newcap*sizeof (double));
+    /* commit whichever reallocations succeeded, so no valid block is ever
+       leaked, then bail out if any of the five failed */
+    if (ns)  b->s  = ns;
+    if (nhf) b->hf = nhf;
+    if (nth) b->th = nth;
+    if (nom) b->om = nom;
+    if (nzt) b->zt = nzt;
+    if (!ns || !nhf || !nth || !nom || !nzt) {
+      free (b->s);  free (b->hf);  free (b->th);
+      free (b->om); free (b->zt);
+      b->s = b->hf = b->th = b->om = b->zt = NULL;
+      b->n = -1;                /* mark failed; the caller's loop bound
+				    (i < b->n) then safely does nothing */
+      return;
+    }
+    b->cap = newcap;
   }
   b->s[b->n] = s;
   b->hf[b->n] = y[0];
@@ -88,7 +117,7 @@ int main (int argc, char *argv[]) {
   gle_params_load (ac, argv, &p, NULL);
 
   if (omega0_guess == 0.0)
-    omega0_guess = gle_static_curvature (p.theta_mic);
+    omega0_guess = gle_static_curvature (p.theta_mic, p.grav);
 
   GLESolution sol;
   if (gle_shoot (&p, omega0_guess, &sol)) {

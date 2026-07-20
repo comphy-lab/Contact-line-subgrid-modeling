@@ -17,10 +17,10 @@ $$\mathcal{R}(\omega_0) \equiv \omega\big|_{h=H} -
   \sqrt{2\,\bigl(1 - \sin\theta\big|_{h=H}\bigr)} = 0 .$$
 
 One unknown, one condition. The meniscus rise follows from the hydrostatic
-balance $\omega = z$ that holds on the static manifold:
-$$\Delta = \zeta\big|_{h=H} + \omega\big|_{h=H},$$
+balance $\omega = g^{*} z$ that holds on the static manifold:
+$$\Delta = \zeta\big|_{h=H} + \omega\big|_{h=H}/g^{*},$$
 and on the lower branch the apparent contact angle is
-$\theta_{\mathrm{app}} = \arcsin(1 - \Delta^2/2)$.
+$\theta_{\mathrm{app}} = \arcsin(1 - g^{*}\Delta^2/2)$.
 
 This single-shooting formulation is the reason the pseudo-arclength
 continuation in [gle-continuation.h](gle-continuation.h) is a $2\times 2$
@@ -70,7 +70,8 @@ enum gle_shoot_status {
 typedef struct {
   double omega0;      /* converged contact-line curvature                   */
   double Delta;       /* meniscus rise z_cl (units of l_gamma)              */
-  double theta_app;   /* apparent angle from Delta (NAN past the fold)      */
+  double theta_app;   /* negative past the fold, NAN once
+			  |1 - g*Delta^2/2| > 1                              */
   double theta_min;   /* minimum interface angle along the profile          */
   double theta_end;   /* angle at the matching point                        */
   double omega_end;   /* curvature at the matching point                    */
@@ -114,16 +115,21 @@ static double gle_shoot_residual (const GLEParams *p, double omega0,
 		  gle_s0 (p)*cos (p->theta_mic) };
   gle_shoot_obs ob = { p->theta_mic, sampler, sctx };
 
-  int st = gle_integrate (p, &s, y, p->H_match, p->smax_cap,
+  int omega_zero = (p->outer_bc == GLE_OUTER_OMEGA_ZERO);
+  int st = gle_integrate (p, &s, y,
+			  omega_zero ? -1.0 : p->H_match, p->smax_cap,
 			  gle_shoot_observer, &ob);
 
   double R;
-  if (st == GLE_OK)
-    R = y[2] - gle_static_curvature (y[1]);
+  if (omega_zero && st == GLE_ERR_SMAX)
+    R = y[2];                        /* omega(s_max) = 0 */
+  else if (!omega_zero && st == GLE_OK)
+    R = y[2] - gle_static_curvature (y[1], p->grav);
   else
     /* domain exit or budget: signed penalty for bracketing */
     R = (y[1] < p->theta_mic ? -1.0e3 : 1.0e3);
 
+  int reached = (omega_zero ? st == GLE_ERR_SMAX : st == GLE_OK);
   if (out) {
     out->omega0 = omega0;
     out->iters = 0;
@@ -132,16 +138,17 @@ static double gle_shoot_residual (const GLEParams *p, double omega0,
     out->omega_end = y[2];
     out->s_end = s;
     out->residual = R;
-    if (st == GLE_OK) {
-      out->Delta = y[3] + y[2];        /* zeta + hydrostatic curvature */
-      double sa = 1.0 - 0.5*out->Delta*out->Delta;
+    if (reached && !omega_zero) {
+      out->Delta = y[3] + y[2]/p->grav; /* zeta + omega/grav (hydrostatic) */
+      double sa = 1.0 - 0.5*p->grav*out->Delta*out->Delta;
       out->theta_app = (fabs (sa) <= 1.0 ? asin (sa) : NAN);
     }
     else {
+      /* no bath matching in omega-zero mode: report the end angle */
       out->Delta = NAN;
-      out->theta_app = NAN;
+      out->theta_app = (reached ? y[1] : NAN);
     }
-    out->status = (st == GLE_OK ? GLE_SHOOT_CONVERGED : GLE_SHOOT_FAIL);
+    out->status = (reached ? GLE_SHOOT_CONVERGED : GLE_SHOOT_FAIL);
   }
   return R;
 }
@@ -170,12 +177,16 @@ Strategy:
 */
 static int gle_shoot (const GLEParams *p, double omega0_guess,
 		      GLESolution *sol) {
-  const double tolR = 5.0e-8;
+  /* the 5e-8 floor reflects the e^s noise amplification of the bath-
+     matching mode; the omega-zero residual has O(1) sensitivity and
+     supports a much tighter tolerance (validated against scipy) */
+  const double tolR = (p->outer_bc == GLE_OUTER_OMEGA_ZERO ? 1.0e-11 : 5.0e-8);
   double w = omega0_guess;
   int iters = 0;
 
   /* --- damped Newton --- */
   double R = gle_shoot_residual (p, w, sol, NULL, NULL);
+  double w_best = w, R_best = fabs (R);
   for (int it = 0; it < 60 && fabs (R) < 1.0e2; it++) {
     iters++;
     if (fabs (R) < tolR) {
@@ -203,6 +214,10 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
     }
     w = wn;
     R = Rn;
+    if (isfinite (R) && fabs (R) < R_best) {
+      R_best = fabs (R);
+      w_best = w;
+    }
   }
   if (fabs (R) < tolR) {
     sol->iters = iters;
@@ -210,14 +225,14 @@ static int gle_shoot (const GLEParams *p, double omega0_guess,
     return 0;
   }
 
-  /* --- bracket around the best point seen, then bisect --- */
-  double a = omega0_guess, b = omega0_guess;
+  /* --- bracket around the best Newton iterate seen, then bisect --- */
+  double a = w_best, b = w_best;
   double Ra = gle_shoot_residual (p, a, NULL, NULL, NULL), Rb = Ra;
-  double span = fmax (1.0e-6*fabs (omega0_guess), 1.0e-6);
+  double span = fmax (1.0e-6*fabs (w_best), 1.0e-6);
   int bracketed = 0;
   for (int it = 0; it < 200 && !bracketed; it++) {
-    a = omega0_guess - span;
-    b = omega0_guess + span;
+    a = w_best - span;
+    b = w_best + span;
     Ra = gle_shoot_residual (p, a, NULL, NULL, NULL);
     Rb = gle_shoot_residual (p, b, NULL, NULL, NULL);
     iters += 2;
