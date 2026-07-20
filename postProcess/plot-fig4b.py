@@ -7,7 +7,7 @@
 # Fig. 4b reproduction plot
 
 Overlays the pseudo-arclength/collocation continuation of the GLE
-(`gle-only/gle-continuation`) on the bifurcation diagram of Fig. 4b of
+(`gle-ode/gle-continuation`) on the bifurcation diagram of Fig. 4b of
 Snoeijer & Andreotti, *Annu. Rev. Fluid Mech.* 45:269-292 (2013): meniscus
 rise $z/\\ell_\\gamma$ versus capillary number for a partially wetting plate
 withdrawn from a silicone-oil bath.
@@ -21,7 +21,7 @@ Delon et al. (2008).
 
 ```bash
 uv run postProcess/plot-fig4b.py [branch.csv] [output.pdf]
-# defaults: gle-only/output/fig4b-branch.csv -> img/fig4b-reproduction.png+pdf
+# defaults: gle-ode/output/fig4b-branch.csv -> img/fig4b-reproduction.png+pdf
 ```
 
 ## Author
@@ -50,7 +50,7 @@ REPO = Path(__file__).resolve().parent.parent
 DIGI = REPO / 'data' / 'fig4b-digitized'
 
 branch_csv = Path(sys.argv[1]) if len(sys.argv) > 1 else \
-    REPO / 'gle-only' / 'output' / 'fig4b-branch.csv'
+    REPO / 'gle-ode' / 'output' / 'fig4b-branch.csv'
 out_base = Path(sys.argv[2]).with_suffix('') if len(sys.argv) > 2 else \
     REPO / 'img' / 'fig4b-reproduction'
 out_base.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ ax.text(0.25, np.sqrt(2.0) + 0.04, r'$z_c = \sqrt{2}\,\ell_\gamma$',
 
 ax.set_xlim(0, 11.8)
 ax.set_ylim(0, 3.6)
-ax.set_xlabel(r'$\mathrm{Ca} \times 10^{3}$', fontsize=40, labelpad=15)
+ax.set_xlabel(r'$\mathrm{Ca}\;(\times 10^{-3})$', fontsize=40, labelpad=15)
 ax.set_ylabel(r'$z/\ell_\gamma$', fontsize=40, labelpad=15)
 
 ax.tick_params(which='both', direction='out', width=3, labelsize=30, pad=10)

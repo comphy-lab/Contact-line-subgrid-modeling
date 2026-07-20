@@ -144,10 +144,10 @@ CLAUDE.md
 .comphy-basilisk
 .docker_mode
 
-# gle-only build outputs
-gle-only/output/
-gle-only/gle-solve
-gle-only/gle-continuation
+# gle-ode build outputs
+gle-ode/output/
+gle-ode/gle-solve
+gle-ode/gle-continuation
 
 # qcc scratch directories left behind by interrupted/failed builds
 .qcc*/

@@ -1,4 +1,4 @@
-# gle-only: standalone GLE solver + pseudo-arclength continuation.
+# gle-ode: standalone GLE solver + pseudo-arclength continuation.
 # No external dependencies: any C99 compiler with libm.
 
 CC ?= cc

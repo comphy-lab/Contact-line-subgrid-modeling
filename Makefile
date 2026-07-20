@@ -1,15 +1,15 @@
 # Top-level Makefile for the GLE contact-line solver.
 #
-# Delegates the actual build to gle-only/ (the standalone, dependency-free
+# Delegates the actual build to gle-ode/ (the standalone, dependency-free
 # C solver + continuation drivers). No machine-local paths are assumed.
 
 .PHONY: all test clean
 
 all:
-	$(MAKE) -C gle-only
+	$(MAKE) -C gle-ode
 
 test: all
-	cd gle-only && ./gle-solve fig4b.params Ca=1e-6
+	cd gle-ode && ./gle-solve fig4b.params Ca=1e-6
 	@if which qcc >/dev/null 2>&1; then \
 		echo "qcc found - compiling simulationCases/contactline-gle.c"; \
 		cd simulationCases && qcc -O2 -disable-dimensions -I../src-local \
@@ -20,4 +20,4 @@ test: all
 	fi
 
 clean:
-	$(MAKE) -C gle-only clean
+	$(MAKE) -C gle-ode clean

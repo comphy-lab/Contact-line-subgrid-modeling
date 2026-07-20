@@ -141,13 +141,13 @@ make test            # smoke test; also compiles the Basilisk case if qcc is pre
 Single solve at one capillary number:
 
 ```bash
-cd gle-only && ./gle-solve fig4b.params Ca=5e-3
+cd gle-ode && ./gle-solve fig4b.params Ca=5e-3
 ```
 
 Trace the bifurcation branch through the fold:
 
 ```bash
-cd gle-only && ./gle-continuation fig4b.params branch_out=output/branch.csv
+cd gle-ode && ./gle-continuation fig4b.params branch_out=output/branch.csv
 ```
 
 The GLE-coupled DNS case (serial Basilisk):
@@ -174,7 +174,7 @@ Contact-line-subgrid-modeling
 │   ├── gle-continuation.h - legacy shooting-based arclength continuation (lower branch only)
 │   ├── gle-basilisk.h - the GLE ↔ DNS coupling seam
 │   └── gle-params.h - key=value runtime parameter loader with CLI overrides
-├── gle-only - standalone drivers and parameter files
+├── gle-ode - standalone drivers and parameter files
 │   ├── gle-solve.c - single GLE solve, writes the interface profile
 │   ├── gle-continuation.c - traces the dip-coating branch through the fold
 │   ├── fig4b.params - calibrated parameters reproducing the Fig. 4b theory curve
@@ -199,7 +199,7 @@ Contact-line-subgrid-modeling
 │   └── c-vs-python.png - the C-vs-Python cross-validation figure
 ├── _Archive - superseded code kept for provenance (do not resurrect)
 ├── .github - documentation pipeline and website generator
-├── Makefile - top-level build delegating to gle-only
+├── Makefile - top-level build delegating to gle-ode
 ├── reproduce-fig4b.sh - one-shot branch trace + figure regeneration
 └── LICENSE
 ```

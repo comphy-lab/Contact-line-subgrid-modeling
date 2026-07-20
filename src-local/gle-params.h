@@ -3,7 +3,7 @@
 
 Minimal runtime-parameter layer following the CoMPhy convention (parameter
 files of `key = value` lines, `#` comments, CLI `key=value` overrides). The
-drivers in [gle-only/](../gle-only/) call `gle_params_load()` with `argc/argv`;
+drivers in [gle-ode/](../gle-ode/) call `gle_params_load()` with `argc/argv`;
 the first non-`key=value` argument is treated as a parameter file path.
 
 Angles are given in **degrees** in parameter files (`theta_mic_deg`) and

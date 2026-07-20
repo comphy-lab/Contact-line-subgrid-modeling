@@ -15,7 +15,7 @@ and couples to a Basilisk two-phase DNS above it.
   BVP in `gle-shoot.h`; fold-free collocation branch tracer in
   `gle-collocate.h`; legacy shooting continuation in `gle-continuation.h`; the
   GLE ↔ DNS seam in `gle-basilisk.h`; the `key=value` loader in `gle-params.h`.
-- `gle-only/` — standalone drivers (`gle-solve.c`, `gle-continuation.c`), the
+- `gle-ode/` — standalone drivers (`gle-solve.c`, `gle-continuation.c`), the
   calibrated `fig4b.params`, and a self-contained `Makefile`.
 - `simulationCases/` — Basilisk DNS cases; `contactline-gle.c` is the
   GLE-coupled case, `contactline.c` the fixed-angle baseline.
@@ -69,7 +69,7 @@ either solver:
    well-conditioned window.
 4. Gravity-rescaling invariance:
    ```bash
-   cd gle-only
+   cd gle-ode
    ./gle-continuation fig4b.params slip=3.73e-6 grav=4.0 Delta_max=1.8
    ```
    `fold_Ca` must stay invariant to $\sim 10^{-3}$; `fold_Delta` halves to

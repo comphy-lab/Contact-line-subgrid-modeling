@@ -1,7 +1,7 @@
 # Archive
 
 Superseded code kept for provenance, not for use. The active solver stack
-lives in `src-local/gle-*.h`, `gle-only/`, and `python/`.
+lives in `src-local/gle-*.h`, `gle-ode/`, and `python/`.
 
 ## GSL/SUNDIALS-era C solver
 

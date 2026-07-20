@@ -10,7 +10,7 @@
 # `compare-c-python.py` — cross-validate the C GLE solver against the Python reference
 
 This script reproduces, end to end, the comparison between the C implementation
-of the Generalized Lubrication Equation (GLE) solver (`gle-only/gle-solve`,
+of the Generalized Lubrication Equation (GLE) solver (`gle-ode/gle-solve`,
 built on the headers in `src-local/`) and the historical Python reference
 (`GLE_solver.py`). Both solve the *same* boundary-value problem for a vertical
 plate withdrawing from a bath,
@@ -138,7 +138,7 @@ def run_c(repo: Path, gle):
     Returns ``(s, h, theta_rad)``. The physical parameters are taken from the
     imported Python module so the two solvers are guaranteed identical.
     """
-    src = repo / "gle-only" / "gle-solve.c"
+    src = repo / "gle-ode" / "gle-solve.c"
     inc = repo / "src-local"
     grav = 1.0 / gle.l_cap ** 2                    # g* = 1 / l_cap^2
     theta_deg = float(np.rad2deg(gle.theta0))
