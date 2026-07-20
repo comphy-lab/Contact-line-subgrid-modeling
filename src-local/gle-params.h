@@ -4,7 +4,9 @@
 Minimal runtime-parameter layer following the CoMPhy convention (parameter
 files of `key = value` lines, `#` comments, CLI `key=value` overrides). The
 drivers in [gle-ode/](../gle-ode/) call `gle_params_load()` with `argc/argv`;
-the first non-`key=value` argument is treated as a parameter file path.
+the first non-`key=value` argument is treated as a parameter file path. Any
+further bare (non-`key=value`) argument is ignored with a warning on
+`stderr`.
 
 Angles are given in **degrees** in parameter files (`theta_mic_deg`) and
 converted here; every other quantity is in capillary-length units as defined
@@ -155,14 +157,25 @@ static int gle_kv_apply (GLEParams *p, GLEContOpts *o, const char *key,
 ### gle_params_load()
 
 Populates defaults, then applies (in order): an optional parameter file given
-as a bare CLI argument, then every CLI `key=value` override left to right.
-`o` may be `NULL` for drivers without continuation options.
+as the first bare CLI argument, then every CLI `key=value` override left to
+right. Only the first bare argument is treated as a parameter file path; any
+subsequent bare argument is reported to `stderr` as an ignored extra
+positional argument rather than being opened. `o` may be `NULL` for drivers
+without continuation options.
 */
 static void gle_params_load (int argc, char *argv[], GLEParams *p,
 			     GLEContOpts *o) {
+  int have_file = 0;
   for (int i = 1; i < argc; i++) {
     char *eq = strchr (argv[i], '=');
     if (!eq) {                        /* parameter file */
+      if (have_file) {
+	fprintf (stderr,
+		 "gle-params: ignoring extra positional argument '%s'\n",
+		 argv[i]);
+	continue;
+      }
+      have_file = 1;
       FILE *fp = fopen (argv[i], "r");
       if (!fp) {
 	fprintf (stderr, "gle-params: cannot open '%s'\n", argv[i]);

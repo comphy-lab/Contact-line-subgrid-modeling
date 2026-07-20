@@ -30,6 +30,7 @@ Vatsal Sanjay (vatsal.sanjay@comphy-lab.org)
 CoMPhy Lab, Department of Physics, Durham University
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -39,8 +40,11 @@ import numpy as np
 
 matplotlib.rcParams['font.family'] = 'serif'
 matplotlib.rcParams['font.serif'] = ['Computer Modern Roman']
-matplotlib.rcParams['text.usetex'] = True
-matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
+if shutil.which('latex'):
+    matplotlib.rcParams['text.usetex'] = True
+    matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
+else:
+    matplotlib.rcParams['mathtext.fontset'] = 'cm'
 
 """
 ## Paths
@@ -111,7 +115,7 @@ ax.text(0.25, np.sqrt(2.0) + 0.04, r'$z_c = \sqrt{2}\,\ell_\gamma$',
 
 ax.set_xlim(0, 11.8)
 ax.set_ylim(0, 3.6)
-ax.set_xlabel(r'$\mathrm{Ca}\;(\times 10^{-3})$', fontsize=40, labelpad=15)
+ax.set_xlabel(r'$\mathrm{Ca}\ (\times 10^{-3})$', fontsize=40, labelpad=15)
 ax.set_ylabel(r'$z/\ell_\gamma$', fontsize=40, labelpad=15)
 
 ax.tick_params(which='both', direction='out', width=3, labelsize=30, pad=10)

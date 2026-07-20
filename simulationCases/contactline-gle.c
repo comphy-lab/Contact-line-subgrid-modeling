@@ -159,13 +159,20 @@ parameters (beyond the entrainment transition), the previous angle is kept
 scalar KAPPA[];
 event gle_boundary (i++) {
   curvature (f, KAPPA);
-  double kappa_cl = 0., ycl = HUGE;
+  /* Two passes keep the min-y selection and its curvature consistent
+     under parallel reductions: ties at equal y resolve deterministically
+     to the largest curvature. */
+  double ycl = HUGE;
   foreach (reduction(min:ycl))
-    if (f[] > 0.1 && f[] < 0.9 && y < ycl && KAPPA[] != nodata) {
+    if (f[] > 0.1 && f[] < 0.9 && KAPPA[] != nodata && y < ycl)
       ycl = y;
-      kappa_cl = KAPPA[];
-    }
-  if (ycl < HUGE) {
+  double kappa_cl = -HUGE;
+  if (ycl < HUGE)
+    foreach (reduction(max:kappa_cl))
+      if (f[] > 0.1 && f[] < 0.9 && KAPPA[] != nodata && y == ycl &&
+	  KAPPA[] > kappa_cl)
+	kappa_cl = KAPPA[];
+  if (ycl < HUGE && kappa_cl > -HUGE) {
     GLEParams gp = gle_default_params ();
     gp.Ca = Ca;                    /* receding plate: Ca > 0 */
     gp.mu_r = mu_r;                /* DNS gas/liquid viscosity ratio */
