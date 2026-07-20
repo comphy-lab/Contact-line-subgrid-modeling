@@ -1,13 +1,13 @@
 // This is a 2D simulation for Landau-Levich coating with the plate moving with non-dimensional velocity Ca
 //The box is infinitely large, domain size Ldomain will be reduced later on
 #include "navier-stokes/centered.h"
-#define FILTERED
+#define FILTERED 1
 #include "two-phase.h"
 #include "navier-stokes/conserving.h"
 #include "tension.h"
 // #include "adapt_wavelet_limited_v2.h"
 #include "reduced.h"
-#include "contact-fixed.h"
+#include "contact.h"
 
 #define MINlevel 3                                              // minimum level
 
@@ -57,6 +57,7 @@ u.n[top] = neumann(0.);
 uf.n[top] = neumann(0.0);
 p[top] = dirichlet(0.0);
 
+double theta;
 vector h[];
 h.t[bottom] = contact_angle(theta);
 
