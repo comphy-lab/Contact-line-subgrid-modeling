@@ -1,0 +1,75 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment; queue older runs so they can exit cleanly
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  check-skip:
+    runs-on: ubuntu-latest
+    outputs:
+      should-skip: ${{ steps.check.outputs.should_skip }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - id: check
+        name: Check if should skip
+        run: |
+          should_skip=false
+          if git log -1 --pretty=%B | sh .github/scripts/has_skip_deploy_marker.sh; then
+            should_skip=true
+          fi
+
+          if latest_sha="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"; then
+            if [ -n "$latest_sha" ] && [ "$latest_sha" != "$GITHUB_SHA" ]; then
+              should_skip=true
+            fi
+          fi
+
+          echo "should_skip=$should_skip" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: check-skip
+    if: ${{ needs.check-skip.outputs.should-skip == 'false' }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install pinned Pandoc
+        uses: pandoc/actions/setup@86321b6dd4675f5014c611e05088e10d4939e09e # v1.1.1
+        with:
+          version: '2.19.2'
+
+      - name: Build documentation site
+        run: bash .github/scripts/build.sh --force-rebuild
+
+      - name: Verify deployment entry point
+        run: test -s .github/docs/index.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@1f0c5cde4bc74cd7e1254d0cb4de8d49e9068c7d # v4.0.0
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: '.github/docs'  # Deploy the pre-built docs directory
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

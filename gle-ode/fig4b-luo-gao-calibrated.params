@@ -1,0 +1,30 @@
+# Fig. 4b with the direct Luo--Gao slippery-wedge GLE.
+#
+# theta_e is fixed by the static foot, exactly as in fig4b.params. The slip
+# length is then independently calibrated to the legacy continuation fold
+# Ca* = 1.0544249173e-2. This makes fold agreement circular: the fold height
+# and the rest of the branch are the out-of-sample comparisons.
+#
+# A one-dimensional secant solve in slip, evaluated with
+#   mesh_N=2500 dDelta=0.002 dDelta_max=0.015 Delta_max=1.8
+# gives slip = 8.48805e-6 and fold Ca* = 1.0544249138e-2. The direct model
+# contains no case-level c_slip.
+
+geometry = vertical
+gle_model = luo_gao
+c_method = auto
+theta_mic_deg = 53.46
+slip = 8.48805e-6
+mu_r = 0.0
+grav = 1.0
+
+H_match = 5.0
+smax_cap = 100.0
+rtol = 1.0e-10
+atol = 1.0e-12
+
+Ca_start = 1.0e-6
+Delta_max = 3.7
+Ca_stop_min = 1.0e-4
+max_points = 2000
+verbose = 1

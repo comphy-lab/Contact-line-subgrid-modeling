@@ -1,0 +1,949 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[margin=1in]{geometry}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue]{hyperref}
+
+\graphicspath{{../img/}}
+
+% --- shorthand --------------------------------------------------------------
+\newcommand{\Ca}{\mathrm{Ca}}
+\newcommand{\lgamma}{\ell_\gamma}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\mur}{\mu_r}
+
+\title{The Generalized Lubrication Equation as a subgrid
+  contact-line model: theory, numerics, and validation}
+
+\author{Vatsal Sanjay\textsuperscript{1} and
+  Aman Bhargava\textsuperscript{2}\\[4pt]
+  \parbox{0.92\textwidth}{\centering
+    \small \textsuperscript{1}CoMPhy Lab, Department of Physics,
+      Durham University\\
+    \small \textsuperscript{2}Physics of Fluids Department, Max Planck Center
+      Twente for Complex Fluid Dynamics, and J. M. Burgers Center for Fluid
+      Dynamics, University of Twente, P.O. Box 217, 7500AE Enschede,
+      Netherlands}\\[2pt]
+  \small \texttt{vatsal.sanjay@comphy-lab.org}}
+
+\date{July 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+A moving contact line carries a viscous stress that diverges at the solid,
+so the interface shape below the smallest resolved scale of a direct
+numerical simulation (DNS) cannot be captured on the DNS mesh. This document
+sets out a subgrid treatment of that region built on the Generalized
+Lubrication Equation (GLE) of Snoeijer, which stays quantitative for steep
+interface slopes where classical lubrication theory fails. We record the
+derivation and sign conventions of the arc-length GLE system, the two solvers
+that share its right-hand side (adaptive Cash--Karp shooting and a
+fixed-mesh collocation branch tracer), the calibration used to reproduce the
+dip-coating bifurcation diagram of Snoeijer \& Andreotti, the numerical
+verification of every component, the alternative slippery-wedge equation of
+Luo \& Gao, and the seam that couples the GLE to a Basilisk two-phase DNS at
+the grid scale. The runtime solver stack is header-only C99 with no external
+dependencies; the open-source reference-table generator in
+\texttt{gle-ode/reference-generator/} is an in-repository, development-time
+numerical authority and is not linked into Basilisk.
+\end{abstract}
+
+\section{Introduction}
+
+The hydrodynamic model of a moving contact line predicts a shear stress that
+grows like $1/r$ towards the contact line, so the viscous dissipation carries
+a non-integrable logarithm and no solution exists within continuum
+hydrodynamics alone~\cite{huhscriven1971}. A microscopic mechanism must cut
+the singularity off; the simplest and the one used here is a Navier slip
+length $\lambda$, below which the no-slip condition is relaxed. The physical
+consequence is that the interface bends over a range of scales set by
+$\lambda$ at the bottom and by the macroscopic geometry (here the capillary
+length $\lgamma = \sqrt{\gamma/\rho g}$) at the top --- six or more decades of
+arc length for a millimetric bath and a nanometric slip length.
+
+Resolving all of those decades on a single DNS mesh is infeasible. The
+strategy adopted here divides the labour by length scale. A subgrid model
+carries the viscous bending of the interface from the slip length up to the
+DNS grid size $\Delta$; a Basilisk two-phase DNS carries it from $\Delta$ up
+to the macroscopic scale. The two are coupled at $\Delta$: each DNS time step
+the subgrid model hands the DNS an \emph{apparent} contact angle at the grid
+scale, and takes the DNS interface curvature at that scale as its own outer
+boundary condition. The subgrid wedge never has to be resolved on the DNS
+mesh.
+
+The subgrid model is the GLE of Snoeijer~\cite{snoeijer2006}, a long-wavelength
+theory that --- unlike ordinary lubrication theory --- remains quantitative
+when the interface is steep, and reduces to lubrication theory in the
+small-slope limit. This document covers, in turn: the derivation and
+conventions of the GLE in the arc-length form used in the code
+(Section~\ref{sec:theory}); the two numerical solvers and the calibration to
+the dip-coating problem (Section~\ref{sec:numerics}); the verification of each
+component against independent references (Section~\ref{sec:validation}); and
+the GLE\,$\leftrightarrow$\,DNS coupling seam (Section~\ref{sec:coupling}).
+
+\section{Theory}
+\label{sec:theory}
+
+\subsection{From the wedge expansion to the generalized lubrication equation}
+
+Classical lubrication theory expands the Stokes equations in the interface
+slope and is therefore restricted to $|\nabla h| \ll 1$. Snoeijer's
+observation is that at low capillary number the physical requirement is not
+that the interface be flat, but that its \emph{curvature} vary slowly: surface
+tension is strong enough to keep the shape close to that of a straight wedge,
+whatever the opening angle~\cite{snoeijer2006}. One therefore expands the
+Stokes flow about the Huh--Scriven similarity solution for a wedge of finite,
+slowly varying opening angle $\theta(x)$~\cite{huhscriven1971}, treating the
+variation of $\theta$ as the perturbation. The small parameter is
+$\varepsilon = \Ca^{1/2}$, with $\Ca = \eta U^{*}/\gamma$, and the expansion is
+self-consistent as long as
+\begin{equation}
+  h \, \partial_x \theta \ll 1,
+  \label{eq:validity}
+\end{equation}
+i.e. the interface angle turns over a length long compared with the local film
+thickness. There is no restriction on the size of $\theta$ itself.
+
+The result is the generalized lubrication equation (Snoeijer~\cite{snoeijer2006},
+Eq.~14),
+\begin{equation}
+  \partial_x \kappa
+  = 3\,\Ca\,\frac{U/U^{*}}{h^{2}}\,F(\theta)
+    + \frac{1}{\gamma}\,\partial_x \Phi\big|_{z=h},
+  \qquad
+  \kappa = \frac{\partial_{xx} h}{(1 + \partial_x h^{2})^{3/2}},
+  \label{eq:gle-cartesian}
+\end{equation}
+with the full curvature $\kappa$ retained (not its small-slope
+approximation), the body-force potential $\Phi$, and the mobility factor
+(Snoeijer~\cite{snoeijer2006}, Eq.~15)
+\begin{equation}
+  F(\theta) = \frac{2}{3}\,
+  \frac{\tan\theta \, \sin^{2}\theta}{\theta - \cos\theta\sin\theta}.
+  \label{eq:Ftheta}
+\end{equation}
+As $\theta \to 0$, $F(\theta) \to 1$ and Eq.~\eqref{eq:gle-cartesian} collapses
+onto the ordinary lubrication equation, so the GLE is a slope-dependent
+correction of the viscous term that is exact at leading order in $\varepsilon$
+for any slope.
+
+\subsection{The arc-length system}
+
+Parameterising the interface by its curvature keeps
+Eq.~\eqref{eq:gle-cartesian} single-valued through overhangs and folds, which
+the Cartesian form cannot represent. Let $s$ be the arc length along the
+liquid--gas interface, measured from the contact line, and take the state
+vector $y = (h, \theta, \omega, \zeta)$, with $h$ the film thickness normal to
+the plate, $\theta$ the local interface inclination, $\omega = \dd\theta/\dd s$
+the curvature, and $\zeta$ the distance travelled along the plate. The GLE
+becomes the first-order system
+\begin{equation}
+  \frac{\dd h}{\dd s} = \sin\theta, \qquad
+  \frac{\dd\theta}{\dd s} = \omega, \qquad
+  \frac{\dd\omega}{\dd s}
+    = \frac{3\,\Ca\,M(\theta,\mur)}
+           {h\,(h + c_{\lambda}\lambda)} + G(\theta), \qquad
+  \frac{\dd\zeta}{\dd s} = \cos\theta.
+  \label{eq:arclength}
+\end{equation}
+Equation~\eqref{eq:arclength} is the Chan \emph{et al.} constant-cutoff form.
+The denominator $h(h+c_{\lambda}\lambda)$ is the Navier-slip regularisation of
+the bare $h^{2}$: it removes the contact-line singularity of the viscous term
+while recovering $h^{2}$ for $h \gg \lambda$. The cutoff coefficient
+$c_{\lambda}=c(\theta_e,\mur)$ follows from Cox--Voinov matching with
+slip~\cite{chan2020}. The value $c_{\lambda}=3$ is the classical one-fluid,
+small-angle convention, not a universal constant. The implementation accepts
+an explicit coefficient or resolves it once from $(\theta_e,\mur)$ using the
+reference workflow of Section~\ref{sec:closure-protocol}; it remains constant
+along that case's trajectory. The direct Luo--Gao model described there uses
+the same state vector and outer boundary condition but replaces the viscous
+term rather than introducing $c_{\lambda}$.
+
+\subsection{The two-fluid Huh--Scriven mobility}
+
+For a passive outer fluid the mobility is $F(\theta)$ of
+Eq.~\eqref{eq:Ftheta}. The code carries the full two-fluid Huh--Scriven wedge
+factor, which accounts for viscous dissipation in the displaced phase at a
+gas/liquid viscosity ratio $\mur$~\cite{chan2012}:
+\begin{equation}
+  M(\theta,\mur) = \frac{2\sin^{3}\theta\,
+    \bigl[\mur^{2} f_1(\theta) + 2\mur f_3(\theta) + f_1(\pi-\theta)\bigr]}
+   {3\,\bigl[\mur\, f_1(\theta) f_2(\pi-\theta)
+     + f_1(\pi-\theta) f_2(\theta)\bigr]},
+  \label{eq:mobility}
+\end{equation}
+with
+\begin{equation}
+  f_1(\theta) = \theta^{2} - \sin^{2}\theta, \qquad
+  f_2(\theta) = \theta - \sin\theta\cos\theta, \qquad
+  f_3(\theta) = \theta(\pi-\theta) + \sin^{2}\theta.
+  \label{eq:fdefs}
+\end{equation}
+The \emph{plus} sign in the denominator of Eq.~\eqref{eq:mobility} is
+load-bearing: a minus sign there flips the sign of the entire viscous term at
+small $\mur$, and every earlier C port in this repository's history carried
+that error. In the one-fluid limit ($\mur = 0$) the general form reduces to
+\begin{equation}
+  M(\theta,0) = \frac{2\sin^{3}\theta}{3\,f_2(\theta)} = \cos\theta\,F(\theta),
+\end{equation}
+and $M \to 1$ as $\theta \to 0$, recovering the classical result. The mobility
+is not named \texttt{f} in the code because in Basilisk \texttt{f} is the
+volume-of-fluid volume fraction.
+
+\subsection{Sign conventions and the flat-film consistency check}
+
+We take $\Ca = \eta U/\gamma > 0$ for a \emph{receding} contact line --- the
+dip-coating configuration in which the plate is withdrawn from the bath ---
+and $\Ca < 0$ for an advancing line. The consistency check is the flat-film
+limit of the vertical plate: setting $\theta \to 0$ and $\omega' \to 0$ in
+Eq.~\eqref{eq:arclength} balances the viscous term against gravity and gives
+the entrained-film thickness
+\begin{equation}
+  h_{\mathrm{film}} = \sqrt{3\,\Ca}\;\lgamma,
+  \label{eq:hfilm}
+\end{equation}
+the well-known result recovered by Snoeijer~\cite{snoeijer2006} (Fig.~3 of that
+paper) for a film dragged down a vertical plate against a receding contact
+line.
+
+Gravity enters through
+\begin{equation}
+  G(\theta) = -\,g^{*}\cos\theta \quad\text{(vertical plate)}, \qquad
+  G(\theta) = +\,g^{*}\sin\theta \quad\text{(horizontal plate)},
+\end{equation}
+with $g^{*} = (\ell_{\mathrm{unit}}/\lgamma)^{2}$ the gravity prefactor:
+$g^{*} = 1$ when lengths are measured in capillary lengths, and $g^{*} = 0$
+disables gravity (the length unit is then free). Retaining $g^{*}$ as a general
+scaling rather than fixing it to unity makes the gravity-rescaling invariance
+of Section~\ref{sec:validation} an explicit test rather than an identity. In
+the vertical geometry $s$ runs from the contact line \emph{down} towards the
+bath, so the elevation is $z(s) = \Delta - \zeta(s)$ and the static far field
+obeys the hydrostatic balance $\omega = g^{*} z$.
+
+\subsection{The oscillatory film tail and small negative angles}
+
+On the upper (film) branch of the dip-coating problem the interface joins the
+meniscus through an oscillatory tail, the classical dimple oscillation of a
+Landau--Levich film, in which $\theta$ dips slightly below zero. The mobility
+must therefore be continued to small negative angles, and how it is continued
+depends on $\mur$. In the one-fluid limit $M(\theta,0) = 2\sin^{3}\theta/
+[3 f_2(\theta)]$ is analytically \emph{even} in $\theta$, so the exact even
+extension $M(\theta) = M(|\theta|)$ applies, with $M(0) = 1$. For $\mur > 0$
+the mobility is \emph{not} even: near $\theta = 0$ it carries a genuine linear
+term,
+\begin{equation}
+  M(\theta,\mur) = 1 + \frac{3\,\mur\,\theta}{2\pi} + \mathcal{O}(\theta^{2}),
+  \label{eq:mobility-small}
+\end{equation}
+so the raw two-fluid formula is evaluated at the \emph{signed} $\theta$ (the
+apparent $0/0$ at $\theta = 0$ is removable and set explicitly to $M = 1$).
+Because $f_1$ and $f_2$ lose all significant digits to cancellation for small
+arguments ($f_1 \sim \theta^{4}/3$, $f_2 \sim 2\theta^{3}/3$), both switch to
+their Taylor series below $\theta = 0.02$, which is also more accurate than the
+direct trigonometric form there.
+
+\subsection{The dip-coating boundary-value problem}
+
+The steady meniscus at a withdrawn plate is a two-point boundary-value problem
+for the system~\eqref{eq:arclength}. At the inner boundary, the contact line,
+\begin{equation}
+  h(s_0) = h_0, \qquad \theta(s_0) = \theta_e, \qquad
+  \omega(s_0) = \omega_0 \;\text{(unknown)},
+\end{equation}
+with $\theta_e$ the microscopic (equilibrium) contact angle. The integration
+starts at a small but finite $s_0 \sim \lambda$ rather than at $s = 0$ because
+the curvature diverges logarithmically at the contact line even with slip; the
+contribution of the interval $(0, s_0)$ is a bounded logarithm absorbed into
+the calibration.
+
+The outer boundary condition is that the trajectory has landed on the static
+meniscus manifold by the matching thickness $h = H$. Static solutions
+($\Ca = 0$, vertical plate) conserve the first integral
+$\tfrac12\omega^{2} + g^{*}\sin\theta$; the branch connected to a flat bath
+($\omega \to 0$, $\theta \to \pi/2$) therefore satisfies
+\begin{equation}
+  \omega\big|_{h=H} = \sqrt{2\,g^{*}\bigl(1 - \sin\theta\big|_{h=H}\bigr)}.
+  \label{eq:outer}
+\end{equation}
+Matching to Eq.~\eqref{eq:outer} at a moderate $H$ (the code uses $H = 5$) is
+legitimate because the viscous term in Eq.~\eqref{eq:arclength} has by then
+decayed like $3\,\Ca\,M/h$. The meniscus rise follows from the hydrostatic
+balance $\omega = g^{*} z$ on the manifold,
+\begin{equation}
+  \Delta = \zeta\big|_{h=H} + \omega\big|_{h=H}/g^{*},
+  \label{eq:Delta}
+\end{equation}
+and the apparent contact angle from the classical meniscus-rise relation
+$\Delta = \sqrt{2(1 - \sin\theta_{\mathrm{app}})/g^{*}}$
+(Snoeijer \& Andreotti~\cite{snoeijer2013}, Eq.~4), i.e.
+\begin{equation}
+  \theta_{\mathrm{app}} = \arcsin\!\left(1 - \tfrac12 g^{*}\Delta^{2}\right).
+  \label{eq:thetaapp}
+\end{equation}
+
+Setting $\theta_{\mathrm{app}} = 0$ in Eq.~\eqref{eq:thetaapp} gives the
+useful reference level $\Delta = \sqrt{2/g^{*}}$, i.e.
+\begin{equation}
+  z_{\theta_{\mathrm{app}}=0} = \sqrt{2}\;\lgamma
+\end{equation}
+in capillary-length units. For the finite effective slips used here the branch
+crosses this level before its saddle-node: the legacy fold is
+$\Delta^{*}=1.43908$, corresponding through Eq.~\eqref{eq:thetaapp} to
+$\theta_{\mathrm{app}}=-2.03^{\circ}$. The digitised fold is at $1.44617$.
+Above $\Ca^{*}$ no steady meniscus exists and a film is entrained: the
+Landau--Levich transition, at which the upper branch approaches the
+entrained-film thickness of Eq.~\eqref{eq:hfilm}. The existence of this maximum
+speed, and the avoided-critical-behaviour structure around it, were established
+for this system by Eggers~\cite{eggers2004} and by Snoeijer \emph{et
+al.}~\cite{snoeijer2006prl}; the experimental branch is that of Delon \emph{et
+al.}~\cite{delon2008}.
+
+\section{Numerical implementation}
+\label{sec:numerics}
+
+Two complementary solvers share the right-hand side~\eqref{eq:arclength}. Both
+are header-only C99 and need only \texttt{libm} --- no GSL, no SUNDIALS ---
+so the same headers compile under a host compiler and under Basilisk's
+\texttt{qcc}.
+
+\subsection{Adaptive Cash--Karp integration}
+
+The trajectory spans the slip scale $\lambda \sim 10^{-6}\lgamma$ to the
+capillary scale in one integration, and near the contact line
+$\dd\omega/\dd s \sim 1/s$, which a fixed step cannot follow. The integrator is
+an embedded Cash--Karp Runge--Kutta 5(4) pair with proportional step control.
+The step error is measured in the mixed norm
+\begin{equation}
+  E = \left[\frac{1}{4}\sum_{i=1}^{4}
+    \left(\frac{\mathrm{err}_i}{\mathrm{atol} + \mathrm{rtol}\,
+      \max(|y_i|,|y_i^{5}|)}\right)^{2}\right]^{1/2},
+\end{equation}
+a step is accepted when $E \le 1$, and the next step is scaled by
+$\min(5,\max(0.2,\,0.9\,E^{-1/5}))$; the same comparison rejects a NaN error
+norm, which fails every ordinary inequality. Integration terminates on a
+\emph{thickness event} $h = H$, localised to a relative tolerance of
+$10^{-13}$ on $h$ by bisection on the final step size. This is how the outer
+matching point of the boundary-value problem is hit exactly.
+
+\subsection{Single shooting on the contact-line curvature}
+
+The static-manifold condition~\eqref{eq:outer} reduces the boundary-value
+problem to a single scalar equation in the unknown $\omega_0$,
+\begin{equation}
+  \mathcal{R}(\omega_0) \equiv \omega\big|_{h=H}
+    - \sqrt{2\,g^{*}\bigl(1 - \sin\theta\big|_{h=H}\bigr)} = 0,
+  \label{eq:residual}
+\end{equation}
+solved by a damped Newton iteration with a central finite-difference
+derivative, falling back to geometric bracket expansion and bisection on
+stagnation. Trajectories that leave the physical domain before reaching $H$
+return signed penalties chosen so that a collapsing interface
+($\theta \to 0$, $h \to 0$) reads as $\omega_0$ too small and a fold-over
+($\theta \to \pi$) as $\omega_0$ too large; bisection then still brackets.
+
+The conditioning of Eq.~\eqref{eq:residual} sets a floor on the achievable
+residual. The flat-bath fixed point of Eq.~\eqref{eq:arclength} has a growing
+mode, so a perturbation at the contact line is amplified downstream like
+$e^{s}$. The matching therefore cannot be pushed to large $H$ without losing
+all precision, and even at $H = 5$ the residual floor with the default
+integrator tolerances is $\sim 10^{-8}$; the Newton tolerance is set at
+$5\times10^{-8}$ accordingly. (The alternative far-field condition
+$\omega(s_{\max}) = 0$, used only for the cross-validation of
+Section~\ref{sec:validation}, has $\mathcal{O}(1)$ sensitivity in $\omega$ and
+supports a tolerance of $10^{-11}$.) Shooting is the fast single-solve path and
+the engine of the DNS coupling; on the lower branch it is reliable up to
+roughly $0.6\,\Ca^{*}$, beyond which the residual window in $\omega_0$ narrows
+exponentially towards the fold.
+
+\subsection{Collocation branch tracing through the fold}
+
+Shooting cannot trace the full bifurcation diagram. In the $(\omega_0, \Ca)$
+plane the branch makes a hairpin at the fold that is narrower than the shooting
+map can resolve: the forward flow \emph{compresses} the separation between
+neighbouring branches like $e^{-s}$ while amplifying noise like $e^{+s}$. Deep
+on the upper branch the trajectory carries a film section of length
+$\sim \Delta$ whose exponential dichotomy makes shooting ill-conditioned in
+\emph{both} directions. The chart $(\omega_0, \Ca)$ is therefore degenerate at
+the fold.
+
+The branch tracer instead discretises the whole problem on a \emph{fixed} mesh
+and parameterises solutions by the meniscus rise $\Delta$, which is monotone
+along the entire branch. Nodes $s_i = s_0\,(s_{\mathrm{end}}/s_0)^{\tau_i}$ use
+a hybrid grading, logarithmic below $s = 0.3$ (to resolve the slip-to-mesoscale
+decades near the contact line) and uniform above (to resolve the film and
+meniscus foot, whose widths are $\mathcal{O}(\sqrt{\Ca})$); only the uniform
+part dilates with the unknown domain length $s_{\mathrm{end}}$. The cell
+residuals are the second-order implicit midpoint rule,
+\begin{equation}
+  y_{i+1} - y_i - (s_{i+1}-s_i)\,
+    \mathbf{f}\!\left(\tfrac12(y_i + y_{i+1})\right) = 0,
+\end{equation}
+closed by the contact-line conditions, the static-manifold
+condition~\eqref{eq:outer} at node $N$, the definition $h_N = H$ (which fixes
+$s_{\mathrm{end}}$), and the target rise
+$\zeta_N + \omega_N/g^{*} = \Delta^{*}$. The unknowns are the $4(N{+}1)$ node
+states together with $\Ca$ and $s_{\mathrm{end}}$; the equations are the $4N$
+collocation residuals plus six conditions. The system is square.
+
+The Jacobian is block-bidiagonal of bandwidth seven with two dense border
+columns ($\partial/\partial\Ca$ and $\partial/\partial s_{\mathrm{end}}$,
+formed by finite differences of the full residual) and two border rows (the
+$h_N$ and $\Delta$ conditions). It is solved by the bordering algorithm:
+banded LU with partial pivoting on the square band part, three back-solves, and
+a $2\times2$ reduced system for the two border unknowns. Because $\Delta$ is
+monotone along the branch, marching $\Delta^{*}$ with a secant predictor and an
+adaptive step (halved on a failed corrector, grown by $1.4\times$ on fast
+convergence) walks straight through the fold with no turning-point handling at
+all. This is exactly what the mesh re-adaptation of SciPy's
+\texttt{solve\_bvp} inside a continuation loop could not do --- the failure
+mode of the historical Python continuation (issues~\#14 and~\#16 of the
+repository) --- because a mesh that moves between Newton iterations makes the
+extended continuation system inconsistent. A fixed mesh keeps it consistent.
+The construction is a stabilised multiple-shooting march in the sense of local
+parameterisation continuation~\cite{rheinboldt1980}.
+
+\subsection{Parameters and calibration for Fig.~4b}
+
+The Fig.~4b reproduction has two fitted microscopic inputs, the equilibrium
+angle $\theta_e$ and an effective slip parameter $\lambda$, with the legacy
+cutoff convention fixed explicitly at $c_{\lambda}=3$. They are calibrated
+against the vector-digitised theory curve of Fig.~4b of Snoeijer \&
+Andreotti~\cite{snoeijer2013}, not measured independently:
+\begin{itemize}
+  \item $\theta_e = 53.46^{\circ}$, fixed by the static foot
+    $\Delta(\Ca \to 0) = \sqrt{2(1 - \sin\theta_e)} = 0.627$ at the
+    contact line. The implemented boundary starts at finite $s_0$ and adds
+    $s_0\cos\theta_e$, a $4.44\times10^{-6}$ offset for the default case;
+  \item $\lambda/\lgamma = 7.46\times10^{-6}$, fixed by the digitised fold
+    $\Ca^{*} = 10.54\times10^{-3}$. The prediction is only logarithmically
+    sensitive to $\lambda$, so the fold calibration absorbs the chosen
+    $c_{\lambda}=3$ cutoff convention into this fitted value. It must not be
+    read as an independently measured physical Navier length.
+\end{itemize}
+Because the microscopic cutoff is calibrated \emph{to} $\Ca^{*}$, recovering
+$\Ca^{*}$ from the traced branch is circular by construction and is not a
+test. The genuine
+out-of-sample checks are the fold height $\Delta^{*} = 1.440$ (digitised
+$1.446$, not fit to) and the full branch shape, including the upper-branch
+approach to the Landau--Levich asymptote, which carries no further free
+parameters.
+
+The one-shot reproduction additionally enforces an external branch-shape
+gate. Resampling the legacy branch and independently digitised theory curve
+onto 421 uniformly spaced heights gives maximum
+$|\Delta\Ca|=2.012\times10^{-4}$ and RMS $1.044\times10^{-4}$, below fixed
+budgets of $2.2\times10^{-4}$ and $1.1\times10^{-4}$. Every generated branch
+must also reach its requested upper-branch height, so a truncated continuation
+cannot pass this gate.
+
+The legacy $c_{\lambda}=3$ reproduction is retained as provenance. Its
+effective slip was calibrated to the digitised fold at the reported resolution.
+For the case-dependent Chan closure and the direct Luo--Gao equation, the new
+effective slips are fitted to the computed legacy fold
+$\Ca^{*}=1.0544249\times10^{-2}$. These are calibrations, not independent
+validations. Comparisons between the two equations therefore also hold
+$\lambda$, $\theta_e$ and $\mur$ fixed; otherwise a refitted microscopic length
+can conceal the full formulation difference.
+
+\section{Validation}
+\label{sec:validation}
+
+The checks below distinguish numerical verification from physical-model
+validation. Cross-solver and cross-language tests establish that the two C
+solvers integrate their stated equations consistently, while mesh convergence
+and gravity invariance test the discretisation and units. The finite-$\mur$
+Chan closure is checked against the independent inner-Stokes solves at the
+$Q$ level. The integrated Fig.~4b branch comparison is one-phase; no
+independent finite-$\mur$ full-profile benchmark is claimed here.
+
+\subsection{Microscopic closure and GLE-model protocol}
+\label{sec:closure-protocol}
+
+\paragraph{Numerical authority.}
+At $\mur=0$, a dedicated public generator solves Scott's singular integral
+equation for the wall-stress function and evaluates
+$Q_i=k_\infty^{-1}\int\Gamma\,\mathrm d\rho$. Subtracting the value at the
+collocation point regularises the logarithmic kernel, while Scott's analytic
+$K_0$ series supplies the truncated-domain tails. This produces the separate
+one-phase table and convergence evidence described below.
+
+For finite $\mur$, the two-phase reference generator solves the Stokes
+equations in a straight wedge with the same constant Navier slip length on
+both solid sectors. The outer boundary is the Huh--Scriven wedge velocity and
+the inner solution is regularised by slip. From the computed wall force it
+fits, with $\mu_1$ the reference-phase viscosity,
+\begin{equation}
+  \frac{W}{\mu_1 U}
+  = \frac{3M(\theta_e,\mur)}{\sin\theta_e}
+      \ln\!\frac{R}{\lambda} + H,
+  \qquad
+  Q=1+\frac{\sin\theta_e}{3M(\theta_e,\mur)}H,
+  \label{eq:Q-extraction}
+\end{equation}
+and converts $Q$ to the Chan cutoff through
+\begin{equation}
+  c_{\lambda}=\sin\theta_e\,\exp(1-Q).
+  \label{eq:Q-to-c}
+\end{equation}
+The logarithmic slope is checked against its analytic coefficient, while mesh,
+inner and outer radii, and the logarithmic fitting window are refined
+independently. Only converged values are frozen on the
+$(\theta_e,\log\mur)$ table. Thus the generator is the numerical authority for
+the chosen equal-constant-slip microscopic model; it is not a claim that
+$c_{\lambda}$ is universal across other microscopic boundary conditions.
+
+\paragraph{Dependency-free runtime closure.}
+The production C code does not solve the Stokes problem. It consumes the
+frozen table and resolves $c_{\lambda}$ once after the case parameters are
+known. The automatic policy is ordered deliberately: (i) the Scott--Hocking
+$\mur=0$ reference branch, obtained from Hocking's integral problem as
+evaluated by Scott~\cite{hocking1977,scott2020}; (ii) the corrected
+right-angle branch; (iii) interpolation in $Q$ over the convergence-checked
+table; and
+(iv) the explicit Luo--Gao value of $Q$ as an \emph{approximate} fallback
+with that provenance exposed to the caller. Interpolating $Q$, rather than
+$c_{\lambda}$, preserves the additive Cox matching constant. The fallback is
+used only outside available reference data; it is not promoted to numerical
+authority.
+The Scott--Hocking implementation consumes 70 direct solutions of Scott's
+singular integral problem and the analytic Hocking right-angle anchor. Each
+node is compared with coarser and wider-domain solves; the largest recorded
+sensitivity is $6.618\times10^{-5}$ in $Q_i$. Direct solutions at all interior
+cell midpoints and in both asymptotic endpoint intervals give 71 independent
+checks, with maximum interpolation discrepancy $4.240\times10^{-5}$ and
+maximum discrepancy-plus-solve-sensitivity budget $1.793\times10^{-4}$.
+Scott's published table is reproduced to $3.106\times10^{-6}$. The
+arbitrary-angle result is therefore a numerically converged reference, not an
+analytic exact formula; only the right-angle anchor is analytic exact.
+
+The frozen half-plane contains 270 converged values on a refined
+$27\times10$ grid over $30^\circ\leq\theta_e\leq150^\circ$ and
+$10^{-2}\leq\mur\leq1$; phase exchange extends the runtime range to
+$10^{-2}\leq\mur\leq10^2$ without extrapolation. Runtime interpolation uses a four-node cubic polynomial in
+$\theta_e$ and a five-node quartic polynomial in $\log_{10}\mur$. A separate
+FEM solve at the centre of every one of the 234 table cells gives
+$\max|Q_{\mathrm{interp}}-Q_{\mathrm{FEM}}|=3.8919\times10^{-4}$.
+Adding the recorded convergence sensitivities of the checkpoint and the 20
+interpolation nodes with absolute Lagrange weights gives a worst propagated
+budget of $1.8310\times10^{-3}$. The largest table-node sensitivity is
+$5.6403\times10^{-4}$; the right-angle discrepancy is
+$1.4458\times10^{-4}$. These are empirical cell-centre and refinement checks,
+not a global interpolation-error bound inside every cell. The raw $\mur=1$
+column obeys phase exchange to $8.98\times10^{-7}$; reflected pairs are
+averaged only in the emitted C header to impose the exact identity, while the
+unmodified FEM values remain public in the CSV.
+
+\paragraph{Corrected right-angle branch.}
+The correction identified by Luo \& Gao~\cite{luo2025} restores the
+phase-exchange symmetry
+$c(\pi/2,\mur)=c(\pi/2,1/\mur)$. Representative values are
+\begin{center}
+\begin{tabular}{ccccc}
+  \toprule
+  $\mur$ & $0$ & $0.02$ & $1$ & $10$ \\
+  \midrule
+  $c(\pi/2,\mur)$ & $1.1229189671$ & $1.20925446$ & $2.05206963$
+    & $1.47616934$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+The limits $\mur\to0$ and $\mur\to\infty$ both give
+$\exp(\ln2-\gamma_E)=1.1229189671$. The finite-$\mur$ entries are regression
+anchors evaluated using the published four-significant-figure constant
+$h_b=-1.539$; their final displayed digits do not imply greater physical
+precision.
+
+\paragraph{Two GLEs, not two spellings of the same closure.}
+The Chan equation uses the case-constant scalar from
+Eq.~\eqref{eq:Q-to-c}. The direct Luo--Gao equation instead applies the local
+slippery-wedge approximation of Luo and Gao and evaluates
+\cite[Eq.~3.16]{luo2025}
+\begin{equation}
+  \left.\frac{\dd\omega}{\dd s}\right|_{\mathrm{visc}}
+  =\frac{\Ca}{h}\,
+   \frac{D h\sin^2\theta+E\lambda\sin^3\theta}
+        {A h^2+B\lambda h\sin\theta+C\lambda^2\sin^2\theta},
+  \label{eq:luo-gao-gle}
+\end{equation}
+where, using Eq.~\eqref{eq:fdefs}~\cite[Eq.~3.17]{luo2025},
+\begin{align}
+  A={}&\mur f_1(\theta)f_2(\pi-\theta)
+       +f_1(\pi-\theta)f_2(\theta), \notag\\
+  B={}&2\sin^2\theta\,[\mur f_1(\theta)+f_1(\pi-\theta)]
+       +2(\mur+1)f_2(\theta)f_2(\pi-\theta), \notag\\
+  C={}&4\sin^2\theta\,[\mur f_2(\theta)+f_2(\pi-\theta)], \notag\\
+  D={}&2\sin\theta\,[\mur^2 f_1(\theta)+2\mur f_3(\theta)
+       +f_1(\pi-\theta)], \notag\\
+  E={}&4\sin\theta\,[\mur^2 f_2(\theta)+\mur\pi+f_2(\pi-\theta)].
+  \label{eq:luo-gao-coefficients}
+\end{align}
+All five coefficients use the \emph{local} angle $\theta(s)$. The equation
+contains no $c_{\lambda}$. Both equations reduce to the same
+Huh--Scriven outer mobility for $h\gg\lambda$, but differ within the
+slip-to-mesoscale region. In the one-phase limit Luo--Gao matching gives
+$c_{\mathrm{LG}}=2\sin^3\theta_e/f_2(\theta_e)$; inserting that number into
+the Chan equation matches one asymptotic constant but does not reproduce
+Eq.~\eqref{eq:luo-gao-gle}, which updates the factor as $\theta(s)$ evolves.
+Chan with a Scott--Hocking, right-angle, or numerical-table value of $Q$ is the
+reference-matched route when one of those sources covers the case. Direct
+Luo--Gao is the fully explicit local alternative when no table value is
+available or that local closure is the object of study; its slippery-wedge
+construction remains an approximation. Their difference is reported as
+formulation uncertainty. The published two-phase
+expression has the wedge domain $0<\theta<\pi$; only its $\mur=0$ reduction
+has an exact even extension through the small negative angles in an oscillatory
+film tail. The direct-model Fig.~4b comparison is consequently made in that
+one-phase limit. At finite $\mur$, a trajectory that reaches $\theta\leq0$
+must use the Chan route rather than extrapolate Eq.~\eqref{eq:luo-gao-gle}.
+
+The two routes are measurably different even before solving an interface
+profile. At the 270 frozen finite-$\mur$ nodes, the explicit Luo--Gao matching
+approximation gives $Q_{\mathrm{LG}}-Q_{\mathrm{FEM}}$ between $-0.95525$ and
+$-0.00710$, with RMS $0.22665$. For example,
+\begin{center}
+\begin{tabular}{ccccc}
+  \toprule
+  $\theta_e$ at $\mur=0.1$ & $60^\circ$ & $90^\circ$ & $120^\circ$ \\
+  \midrule
+  $Q_{\mathrm{FEM}}$ & $0.121237$ & $0.610636$ & $0.689767$ \\
+$Q_{\mathrm{LG}}$ & $0.086959$ & $0.522681$ & $0.525533$ \\
+$c_{\mathrm{LG}}/c_{\mathrm{FEM}}$ & $1.03487$ & $1.09194$ & $1.17849$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+Figure~\ref{fig:finite-m-closure} shows the full nodewise comparison. Each
+square is one converged FEM solve on the deliberately nonuniform grid; no
+interpolation or contour reconstruction is used in this figure.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{finite-m-closure-comparison.pdf}
+  \caption{Finite-viscosity matching comparison over the 270 certified
+  inner-Stokes table nodes. (a) Difference between the explicit Luo--Gao
+  approximation and the FEM reference matching constant.
+  (b) Corresponding ratio of Chan cutoff coefficients, using
+  $c_\lambda=\sin\theta_e\exp(1-Q)$. The ranges are
+  $-0.95525\leq Q_{\rm LG}-Q_{\rm FEM}\leq-0.00710$ and
+  $1.00713\leq c_{\lambda,{\rm LG}}/c_{\lambda,{\rm FEM}}\leq2.59932$;
+  the largest mismatch is at $\theta_e=150^\circ$, $\mur=10^{-2}$.
+  Markers are the actual FEM nodes and no values are inferred between them.}
+  \label{fig:finite-m-closure}
+\end{figure}
+
+Thus Chan with the numerical table is preferred inside the certified domain
+when equal constant slip is the intended microscopic model. Direct Luo--Gao
+is preferable when its local slippery-wedge closure is itself desired or a
+dependency-free explicit model outside the frozen domain is more valuable
+than reference matching; it should not be described as the more accurate
+inner solution by default. The comparison is specific to this microscopic
+model and table domain, not a universal ranking of contact-line
+regularisations.
+
+\paragraph{Calibration-honest Fig.~4b comparison.}
+Two comparisons answer distinct questions. First, the legacy effective
+$\lambda$ is fitted to the digitised fold and each new model is fitted to the
+computed legacy fold. This tests only the out-of-sample fold height and branch
+shape; fold agreement itself is circular.
+Second, running Chan with reference-derived $c_{\lambda}$ and direct Luo--Gao
+at identical input $(\lambda,\theta_e,\mur)$ exposes differences that the
+independent fits would hide. This is the total formulation difference,
+including the models' distinct matching constants and local viscous terms;
+agreement of effective matching constants alone would still not guarantee
+identical Fig.~4b branches. At the implemented $s_0/\lambda=1$, the common-input
+fold shift is $0.41690\%$. Matched starts at $s_0/\lambda=0.1$, $0.01$ and
+$0.001$ give $0.6289\%$, $0.6819\%$ and $0.6903\%$, respectively. Thus the
+sub-percent conclusion is stable, while the single $0.41690\%$ value is
+specific to the finite-start convention; no common finite-$s_0$ inner
+correction is included.
+
+\paragraph{Mobility.}
+The two-fluid mobility~\eqref{eq:mobility} agrees with the Python reference to
+machine precision across $\theta \in (0,\pi)$ and $\mur \in [0,1]$. Below
+$\theta = 0.02$ the C series form is in fact \emph{more} accurate than the
+direct trigonometric formula, which loses precision to the cancellation in
+$f_1$ and $f_2$.
+
+\paragraph{Slip cutoff.}
+The right-angle matching helper reproduces the analytic one-fluid value
+\[
+  c(\pi/2,0)=\exp(\ln 2-\gamma_E)=1.1229189671.
+\]
+The corrected finite-viscosity-ratio values and phase-exchange symmetry are
+listed above. At general angle, every runtime result carries the name and
+status of the reference branch, table interpolation, or approximate fallback
+which supplied it.
+
+\paragraph{Interface profile.}
+Against the historical SciPy \texttt{solve\_bvp} reference solving the
+identical boundary-value problem, the interface angle $\theta(s)$ agrees to a
+relative error below the enforced $2.3\times10^{-4}$ limit throughout the
+well-conditioned window. The automated gate also requires the thickness error
+below $5\times10^{-4}$ and the apparent-angle difference below $10^{-3}$
+degrees.
+The far field is a genuinely soft condition: the gain
+$\dd\theta(10^{6})/\dd\omega_0 \sim 5\times10^{7}$, so the two solutions may
+drift apart in $\theta$ at very large $s$ even though the two right-hand sides
+agree to machine precision. This is a property of the boundary-value problem,
+not of either implementation.
+
+\paragraph{Shooting versus collocation.}
+At equal $\Ca$ the two solvers agree to $\sim 2\times10^{-6}$, confirming that
+the fixed-mesh march and the adaptive shot converge to the same solution branch.
+
+\paragraph{Mesh convergence of the fold.}
+Refining the collocation mesh at $N = 1250$, $2500$, $5000$ cells, with an
+initial continuation step $\Delta\Delta=5\times10^{-4}$ capped at
+$2\times10^{-3}$, gives the fold location
+\begin{center}
+\begin{tabular}{cc}
+  \toprule
+  $N$ & $\Ca^{*}$ \\
+  \midrule
+  1250 & $1.0544514\times10^{-2}$ \\
+  2500 & $1.0544248\times10^{-2}$ \\
+  5000 & $1.0544181\times10^{-2}$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+The successive differences fall by a factor of about four as the mesh spacing
+halves, confirming the second-order convergence of the implicit-midpoint
+discretisation.
+
+\paragraph{Linear algebra.}
+The bordered banded-LU solve agrees with a dense reference factorisation to
+$\sim 10^{-14}$, and the Cash--Karp tableau reproduces its published
+coefficients exactly.
+
+\paragraph{Gravity-rescaling invariance.}
+Rescaling the gravity prefactor to $g^{*} = 4$ should halve both the slip
+length and the meniscus rise (in the new length unit) while leaving $\Ca$
+invariant, since $\Ca$ is dimensionless. The traced branch reproduces this to
+$4.5\times10^{-6}$, a direct test that the general $g^{*}$ scaling is carried
+consistently through both solvers.
+
+\paragraph{Static limit.}
+The $\Ca \to 0$ solve reproduces the static invariant for its implemented
+finite-$s_0$ boundary. The computed and contact-line values are
+\[
+  \Delta_{s_0}=0.626995031426, \qquad
+  \Delta_{\mathrm{cl}}=0.626990589862.
+\]
+Their $4.44\times10^{-6}$ difference is the geometric offset
+$s_0\cos\theta_e$. A regression checks the shifted value, so the small offset
+is explicit rather than hidden by an ``exact'' claim.
+
+\medskip
+Figure~\ref{fig:fig4b} shows the independently calibrated branches overlaid on
+the digitised reference, Fig.~\ref{fig:fig4b-models} holds the microscopic
+inputs fixed between the two equations, and Fig.~\ref{fig:cvspy} gives the
+C-versus-Python cross-validation.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.72\textwidth]{fig4b-reproduction.pdf}
+  \caption{Steady meniscus rise at a receding contact line. Normalised
+  contact-line elevation $z/\lgamma$ against capillary number
+  $\Ca = \eta U_p/\gamma$ for a partially wetting plate withdrawn from a
+  silicone-oil bath. Dashed black retains the legacy Chan branch with
+  $c_\lambda=3$, blue uses the Scott--Hocking one-phase closure in the Chan
+  equation, and red uses the direct Luo--Gao equation. Each effective slip
+  length is independently fitted to the same fold; the coincidence there is
+  therefore calibration, while the fold height and branch shape remain
+  comparisons. The thick grey line is the multiscale-lubrication prediction
+  digitised from Fig.~4b of Snoeijer \& Andreotti
+  (2013)~\cite{snoeijer2013}. Coloured symbols are the
+  experimental realizations of Delon et al. (2008)~\cite{delon2008}: each
+  colour is a distinct run, and the markers denote steady menisci measured at
+  fixed plate speed. In the original review figure these symbols are shadowed
+  by thin continuous coloured traces; those are neither theory nor guides to
+  the eye, but the continuously recorded transient elevation $z_{cl}(t)$ of
+  each run mapped into this plane through the instantaneous relative capillary
+  number $\widetilde{\Ca}(t) = \eta(U_p - \dd z_{cl}/\dd t)/\gamma$. Such
+  transients relax adiabatically through the succession of quasi-steady states
+  and therefore retrace the stationary branch; their visible wiggle is
+  measurement noise amplified by the $\dd z_{cl}/\dd t$ term. Only the discrete
+  steady-state symbols are digitised here. The dotted
+  $z=\sqrt{2}\,\lgamma$ line marks the zero-apparent-angle level. At the fitted
+  finite slips the branches cross it before folding near $z/\lgamma=1.439$;
+  above $\Ca^{*}$ no steady meniscus exists and a film is entrained.}
+  \label{fig:fig4b}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig4b-model-comparison.pdf}
+  \caption{Full-formulation comparison at identical microscopic inputs:
+  $\theta_e=53.46^\circ$, $\mur=0$, and
+  $\lambda/\lgamma=7.46\times10^{-6}$, with neither equation re-fitted.
+  Left: the Chan equation with the Scott--Hocking closure and the direct
+  Luo--Gao equation. Right: their relative capillary-number difference at
+  equal meniscus rise. The direct Luo--Gao fold is $0.41690\%$ above the Chan
+  fold for this common input and the implemented $s_0=\lambda$ start. Matched
+  $s_0/\lambda$ refinement approaches a $0.690\%$ shift, so the robust result
+  is sub-percent rather than the cutoff-specific headline value. The
+  difference includes both the matching constants and the local viscous
+  terms.}
+  \label{fig:fig4b-models}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.95\textwidth]{c-vs-python.png}
+  \caption{Cross-validation of the C solver against the historical Python
+  \texttt{solve\_bvp} reference on the identical far-field boundary-value
+  problem. Left: the interface angle $\theta(s)$ on a logarithmic arc-length
+  axis. Right: the relative error between the two solutions on log--log axes.
+  Agreement is excellent where the problem is well conditioned
+  ($s \lesssim 10^{4}$) and degrades monotonically towards the arc-length cap,
+  a consequence of the soft far-field angle condition rather than of either
+  implementation.}
+  \label{fig:cvspy}
+\end{figure}
+
+\section{The DNS and subgrid GLE coupling}
+\label{sec:coupling}
+
+The GLE resolves the contact-line region from the slip length up to the DNS
+grid size $\Delta$; the Basilisk two-phase DNS resolves everything from
+$\Delta$ up to the macroscopic scale. The coupling is a per-time-step event
+that exchanges one scalar in each direction at the grid scale. Each step
+(\texttt{event (i++)}):
+\begin{enumerate}
+  \item the DNS interface position and curvature $\kappa_{\mathrm{DNS}}$ are
+    sampled in the finest interfacial cell nearest the plate, including an
+    interface aligned exactly with cell faces;
+  \item the subgrid GLE is solved on $s \in [s_0, s_\Delta]$ with
+    $h(s_\Delta) = \Delta$, the inner contact-line conditions, and the outer
+    condition $\omega(s_\Delta) = -\kappa_{\mathrm{DNS}}$, by shooting on
+    $\omega_0$. The minus sign follows from $h=y$, $\zeta=-x$ and the phase
+    orientation used by Basilisk's \texttt{curvature()} in this case;
+  \item the resulting apparent angle $\theta_{\mathrm{app}} = \theta(s_\Delta)$
+    is imposed on the DNS through the height-function \texttt{contact\_angle()}
+    boundary condition. The height vector is associated explicitly with the
+    VOF tracer, so Basilisk actually applies the dynamic angle.
+\end{enumerate}
+This is the multiscale strategy of the review~\cite{snoeijer2013} applied as a
+grid-scale boundary condition, in the spirit of the mesh-dependent dynamic
+contact angle of Afkhami, Zaleski \& Bussmann~\cite{afkhami2009}: the imposed
+angle is a property of the resolved scale, not a fixed material constant.
+
+The seam is implemented and exercised by a bounded Basilisk runtime regression.
+It starts from the exactly grid-aligned interface that previously evaded the
+strict volume-fraction filter, confirms refinement to the intended local grid
+size, and checks that the GLE updates the associated contact angle. During a
+normal run the capillary number is formed from the plate speed relative to the
+measured contact-line speed, the actual local cell size is passed to the GLE,
+and the dynamic angle is stored in a dumped scalar for restart. A
+grid-convergence study of the coupled curvature and contact-line-position
+samples remains the problem-specific production qualification.
+Both the reference-matched Chan model and the direct Luo--Gao
+model~\cite{luo2025} use this same coupling seam. Their equal-physical-slip
+comparison is kept separate from any per-model calibration. The linearised
+GLE has separately been checked against the reference data of Kansal \emph{et
+al.}~\cite{kansal2024}.
+
+\begin{thebibliography}{99}
+
+\bibitem{huhscriven1971}
+C.~Huh and L.~E. Scriven,
+\emph{Hydrodynamic model of steady movement of a solid/liquid/fluid contact
+line}, J.~Colloid Interface Sci. \textbf{35}, 85--101 (1971).
+
+\bibitem{voinov1976}
+O.~V. Voinov,
+\emph{Hydrodynamics of wetting},
+Fluid Dyn. \textbf{11}, 714--721 (1976).
+
+\bibitem{cox1986}
+R.~G. Cox,
+\emph{The dynamics of the spreading of liquids on a solid surface. Part 1.
+Viscous flow}, J.~Fluid Mech. \textbf{168}, 169--194 (1986).
+
+\bibitem{snoeijer2006}
+J.~H. Snoeijer,
+\emph{Free-surface flows with large slopes: beyond lubrication theory},
+Phys. Fluids \textbf{18}, 021701 (2006).
+
+\bibitem{snoeijer2006prl}
+J.~H. Snoeijer, B.~Andreotti, G.~Delon and M.~Fermigier,
+\emph{Avoided critical behavior in dynamically forced wetting},
+Phys. Rev. Lett. \textbf{96}, 174504 (2006).
+
+\bibitem{delon2008}
+G.~Delon, M.~Fermigier, J.~H. Snoeijer and B.~Andreotti,
+\emph{Relaxation of a dewetting contact line: experiments and theory},
+J.~Fluid Mech. \textbf{604}, 55--75 (2008).
+
+\bibitem{chan2012}
+T.~S. Chan, J.~H. Snoeijer and J.~Eggers,
+\emph{Theory of the forced wetting transition},
+Phys. Fluids \textbf{24}, 072104 (2012).
+
+\bibitem{chan2020}
+T.~S. Chan, C.~Kamal, J.~H. Snoeijer, J.~E. Sprittles and J.~Eggers,
+\emph{Cox--Voinov theory with slip},
+J.~Fluid Mech. \textbf{900}, A8 (2020).
+
+\bibitem{hocking1977}
+L.~M. Hocking,
+\emph{A moving fluid interface. Part 2. The removal of the force singularity
+by a slip flow},
+J.~Fluid Mech. \textbf{79}, 209--229 (1977),
+\href{https://doi.org/10.1017/S0022112077000123}
+{doi:10.1017/S0022112077000123}.
+
+\bibitem{scott2020}
+J.~F. Scott,
+\emph{Calculation of a key function in the asymptotic description of moving
+contact lines},
+Q.~J. Mech. Appl. Math. \textbf{73}, 279--291 (2020),
+\href{https://doi.org/10.1093/qjmam/hbaa012}
+{doi:10.1093/qjmam/hbaa012}.
+
+\bibitem{snoeijer2013}
+J.~H. Snoeijer and B.~Andreotti,
+\emph{Moving contact lines: scales, regimes, and dynamical transitions},
+Annu. Rev. Fluid Mech. \textbf{45}, 269--292 (2013).
+
+\bibitem{eggers2004}
+J.~Eggers,
+\emph{Hydrodynamic theory of forced dewetting},
+Phys. Rev. Lett. \textbf{93}, 094502 (2004).
+
+\bibitem{landau1942}
+L.~Landau and B.~Levich,
+\emph{Dragging of a liquid by a moving plate},
+Acta Physicochim. URSS \textbf{17}, 42--54 (1942).
+
+\bibitem{afkhami2009}
+S.~Afkhami, S.~Zaleski and M.~Bussmann,
+\emph{A mesh-dependent model for applying dynamic contact angles to VOF
+simulations}, J.~Comput. Phys. \textbf{228}, 5370--5389 (2009).
+
+\bibitem{kansal2024}
+M.~Kansal \emph{et al.},
+\emph{Eur. Phys. J. Spec. Top.} (2024),
+\href{https://doi.org/10.1140/epjs/s11734-024-01443-5}
+{doi:10.1140/epjs/s11734-024-01443-5}.
+
+\bibitem{luo2025}
+J.~Luo and P.~Gao,
+\emph{Explicit theory of moving contact lines},
+J.~Fluid Mech. \textbf{1019}, A52 (2025),
+\href{https://doi.org/10.1017/jfm.2025.10587}
+{doi:10.1017/jfm.2025.10587}.
+
+\bibitem{rheinboldt1980}
+W.~C. Rheinboldt,
+\emph{Solution fields of nonlinear equations and continuation methods},
+SIAM J.~Numer. Anal. \textbf{17}, 221--237 (1980).
+
+\end{thebibliography}
+
+\end{document}

@@ -133,7 +133,37 @@ test/test_output/
 
 # Explicitly allow Claude files
 .claude/
-!CLAUDE.md
 
 # Cursor AI agent configuration
 **/.cursor
+
+# Claude Code local context shim (kept locally as `@AGENTS.md`)
+CLAUDE.md
+
+# Basilisk Docker helper state
+.comphy-basilisk
+.docker_mode
+
+# gle-ode build outputs
+gle-ode/output/
+gle-ode/gle-cutoff
+gle-ode/gle-solve
+gle-ode/gle-continuation
+gle-ode/test-gle-core
+
+# LaTeX build intermediates (keep the compiled docs/*.pdf)
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.toc
+
+# qcc scratch directories left behind by interrupted/failed builds
+.qcc*/
+
+# Basilisk simulationCases run artifacts
+simulationCases/*.tst
+simulationCases/_*
+intermediate*/
+restart*
+log
+dump*

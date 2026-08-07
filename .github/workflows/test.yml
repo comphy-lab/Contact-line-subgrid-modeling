@@ -1,0 +1,76 @@
+name: Solver tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  documentation-site:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Verify documentation security and failure gates
+        run: |
+          python3 -m unittest discover -s .github/tests -p 'test_*.py' -v
+          node .github/tests/test_search_helper.js
+
+  standalone-c99:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build and test
+        run: make test
+
+  basilisk-coupling:
+    runs-on: ubuntu-24.04
+    env:
+      BASILISK_RELEASE: v2026-05-21
+      BASILISK_LINUX_SHA256: be22c168121b04f9ad42e1cee960bfc7989870f37e03f2e1e83340fb3ee2e8d3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build pinned CoMPhy Basilisk qcc
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Signed release tag d3646df75cdd0c240010c2d33093bbbb0d5e77f2
+          # points to comphy-lab/basilisk-C commit b4ed00314418de8240646d2cc0dd7349fe71f802.
+          archive="${RUNNER_TEMP}/basilisk-linux.tar.gz"
+          release_url="https://github.com/comphy-lab/basilisk-C/releases/download/${BASILISK_RELEASE}/basilisk-linux.tar.gz"
+          curl --retry 3 --fail --location --silent --show-error \
+            "${release_url}" --output "${archive}"
+          printf '%s  %s\n' "${BASILISK_LINUX_SHA256}" "${archive}" | \
+            sha256sum --check --strict -
+
+          tar --warning=no-unknown-keyword -xzf "${archive}" \
+            -C "${RUNNER_TEMP}"
+          basilisk_src="${RUNNER_TEMP}/basilisk/src"
+          ln -s config.gcc "${basilisk_src}/config"
+          make -C "${basilisk_src}/ast" -j2
+          make -C "${basilisk_src}" -j2 qcc
+
+          printf 'BASILISK=%s\n' "${basilisk_src}" >> "${GITHUB_ENV}"
+          printf '%s\n' "${basilisk_src}" >> "${GITHUB_PATH}"
+      - name: Verify pinned qcc
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(command -v qcc)" = "${BASILISK}/qcc"
+          qcc --version
+      - name: Run bounded Chan and Luo-Gao regressions
+        run: make test
+
+  reference-generator:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - name: Verify generator and frozen evidence
+        run: sh tests/verify-reference-table.sh
+      - name: Verify Figure 4b validation grid
+        run: uv run postProcess/test-plot-fig4b.py
