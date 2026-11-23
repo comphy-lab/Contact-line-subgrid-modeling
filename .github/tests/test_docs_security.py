@@ -362,11 +362,14 @@ class WorkflowTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
             self.assertIn("bash .github/scripts/build.sh --force-rebuild", workflow)
             self.assertIn("test -s .github/docs/index.html", workflow)
+            self.assertNotIn("pandoc/actions/setup", workflow)
+            self.assertIn("PANDOC_VERSION: '2.19.2'", workflow)
             self.assertIn(
-                "pandoc/actions/setup@86321b6dd4675f5014c611e05088e10d4939e09e",
+                "PANDOC_DEB_SHA256: "
+                "e5276b8ec6f2f25d85caa7f529a09117dcd346e04a8a5dcca755c58043b4a6f9",
                 workflow,
             )
-            self.assertIn("version: '2.19.2'", workflow)
+            self.assertIn("sha256sum --check --strict -", workflow)
 
 
 if __name__ == "__main__":
