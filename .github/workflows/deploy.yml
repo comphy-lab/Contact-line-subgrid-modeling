@@ -52,9 +52,20 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install pinned Pandoc
-        uses: pandoc/actions/setup@86321b6dd4675f5014c611e05088e10d4939e09e # v1.1.1
-        with:
-          version: '2.19.2'
+        shell: bash
+        env:
+          PANDOC_VERSION: '2.19.2'
+          PANDOC_DEB_SHA256: e5276b8ec6f2f25d85caa7f529a09117dcd346e04a8a5dcca755c58043b4a6f9
+        run: |
+          set -euo pipefail
+          deb="${RUNNER_TEMP}/pandoc-${PANDOC_VERSION}-1-amd64.deb"
+          curl --retry 3 --fail --location --silent --show-error \
+            "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" \
+            --output "${deb}"
+          printf '%s  %s\n' "${PANDOC_DEB_SHA256}" "${deb}" | \
+            sha256sum --check --strict -
+          sudo dpkg --install "${deb}"
+          test "$(pandoc --version | sed -n 1p)" = "pandoc ${PANDOC_VERSION}"
 
       - name: Build documentation site
         run: bash .github/scripts/build.sh --force-rebuild
