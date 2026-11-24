@@ -316,6 +316,97 @@ class GeneratorExitTests(unittest.TestCase):
             )
 
 
+class ReadmeImageTests(unittest.TestCase):
+    def test_copies_only_local_raster_images_inside_the_repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            docs = root / ".github" / "docs"
+            (root / "img").mkdir(parents=True)
+            docs.mkdir(parents=True)
+            (root / "img" / "a.png").write_bytes(b"png")
+            (root / "img" / "b.jpg").write_bytes(b"jpg")
+            (root / "img" / "c.svg").write_text("<svg/>", encoding="utf-8")
+            (root / "notes.txt").write_text("x", encoding="utf-8")
+            outside = Path(tmp) / "secret.png"
+            outside.write_bytes(b"secret")
+            (root / "img" / "link.png").symlink_to(outside)
+            readme = root / "README.md"
+            readme.write_text(
+                "![first figure\nover two lines](img/a.png)\n"
+                '<img src="img/b.jpg" alt="b">\n'
+                "![svg](img/c.svg) ![text](notes.txt)\n"
+                "![escape](../secret.png) ![link](img/link.png)\n"
+                "![remote](https://example.org/x.png) ![abs](/etc/x.png)\n"
+                "![missing](img/none.png)\n",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(GENERATOR.copy_readme_images(readme, docs, root))
+
+            copied = sorted(
+                str(path.relative_to(docs)) for path in docs.rglob("*") if path.is_file()
+            )
+            self.assertEqual(copied, ["img/a.png", "img/b.jpg"])
+            self.assertEqual((docs / "img" / "a.png").read_bytes(), b"png")
+
+
+    def test_accepts_reference_style_and_dotted_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            docs = root / ".github" / "docs"
+            (root / "img").mkdir(parents=True)
+            docs.mkdir(parents=True)
+            for name in ("a.png", "b.png", "c.png", "d.png"):
+                (root / "img" / name).write_bytes(name.encode())
+            (Path(tmp) / "secret.png").write_bytes(b"secret")
+            readme = root / "README.md"
+            readme.write_text(
+                "![dotted](img/../img/a.png) ![full][Plot One] ![collapsed][]\n"
+                "![shortcut] ![undefined][nowhere] ![escape][out]\n\n"
+                "[plot one]: ./img/b.png\n"
+                "[collapsed]: <img/c.png>\n"
+                "[shortcut]: img/d.png \"title\"\n"
+                "[out]: img/../../secret.png\n",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(GENERATOR.copy_readme_images(readme, docs, root))
+
+            copied = sorted(
+                str(path.relative_to(docs)) for path in docs.rglob("*") if path.is_file()
+            )
+            self.assertEqual(
+                copied, ["img/a.png", "img/b.png", "img/c.png", "img/d.png"]
+            )
+
+    def test_refuses_symbolic_links_at_source_and_destination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            docs = root / ".github" / "docs"
+            (root / "img").mkdir(parents=True)
+            (root / "fig").mkdir()
+            docs.mkdir(parents=True)
+            (root / "img" / "a.png").write_bytes(b"png")
+            (root / "fig" / "b.png").write_bytes(b"png")
+            (root / "alias").symlink_to(root / "img", target_is_directory=True)
+            elsewhere = Path(tmp) / "elsewhere"
+            elsewhere.mkdir()
+            (docs / "img").symlink_to(elsewhere, target_is_directory=True)
+            (docs / "fig").mkdir()
+            (docs / "fig" / "b.png").symlink_to(elsewhere / "b.png")
+            readme = root / "README.md"
+            readme.write_text(
+                "![dest dir](img/a.png) ![dest file](fig/b.png)\n"
+                "![source dir](alias/a.png)\n",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(GENERATOR.copy_readme_images(readme, docs, root))
+
+            self.assertEqual(list(elsewhere.iterdir()), [])
+            self.assertFalse((docs / "alias").exists())
+
+
 class WorkflowTests(unittest.TestCase):
     def test_every_external_action_is_commit_pinned(self):
         action_pattern = re.compile(r"uses:\s*[^@\s]+@([0-9a-f]{40})(?:\s|$)")
