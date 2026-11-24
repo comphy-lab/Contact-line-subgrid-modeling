@@ -66,6 +66,7 @@ import io
 import inspect
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -2322,6 +2323,22 @@ README_IMAGE_PATTERN = re.compile(
 )
 
 
+README_REFERENCE_DEFINITION_PATTERN = re.compile(
+    r'^ {0,3}\[([^\]]+)\]:\s*<?([^\s>]+)', re.MULTILINE
+)
+README_REFERENCE_IMAGE_PATTERN = re.compile(r'!\[([^\]]+)\](?:\[([^\]]*)\])?(?!\()')
+
+
+def _has_symlink_component(base: Path, rel: Path) -> bool:
+    """Reports whether any component of rel, walked from base, is a symbolic link."""
+    walked = base
+    for part in rel.parts:
+        walked = walked / part
+        if walked.is_symlink():
+            return True
+    return False
+
+
 def copy_readme_images(readme_path: Path, docs_dir: Path, repo_root: Path) -> bool:
     """
     Copies the local raster images that README.md references into the site.
@@ -2329,8 +2346,10 @@ def copy_readme_images(readme_path: Path, docs_dir: Path, repo_root: Path) -> bo
     index.html is built from README.md and keeps its relative image paths, but
     only the documentation directory is published. Each referenced image that
     is a regular file inside the repository is copied to the same relative
-    path under the documentation directory. Remote URLs, absolute paths, paths
-    that leave the repository, symbolic links and non-raster files are skipped.
+    path under the documentation directory. Inline, HTML and reference-style
+    images are recognised. Remote URLs, absolute paths, paths that leave the
+    repository, non-raster files and any path with a symbolic link at its
+    source or destination are skipped.
 
     Returns:
         True if every eligible image was copied, False if a copy failed.
@@ -2347,42 +2366,46 @@ def copy_readme_images(readme_path: Path, docs_dir: Path, repo_root: Path) -> bo
     docs_dir = docs_dir.resolve()
     ok = True
     seen = set()
-    for match in README_IMAGE_PATTERN.finditer(content):
-        ref = (match.group(1) or match.group(2) or "").split("#", 1)[0].split("?", 1)[0]
+    definitions = {
+        " ".join(m.group(1).split()).lower(): m.group(2)
+        for m in README_REFERENCE_DEFINITION_PATTERN.finditer(content)
+    }
+    refs = [m.group(1) or m.group(2) or "" for m in README_IMAGE_PATTERN.finditer(content)]
+    for match in README_REFERENCE_IMAGE_PATTERN.finditer(content):
+        label = " ".join((match.group(2) or match.group(1)).split()).lower()
+        if label in definitions:
+            refs.append(definitions[label])
+    for raw in refs:
+        ref = raw.split("#", 1)[0].split("?", 1)[0]
         if not ref or ref in seen:
             continue
         seen.add(ref)
         if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", ref) or ref.startswith(("/", "\\")):
             continue
-        rel = Path(ref)
+        # Browsers collapse "." and ".." textually, so the reference is
+        # normalised the same way before any filesystem lookup.
+        rel = Path(posixpath.normpath(ref))
         if rel.suffix.lower() not in README_IMAGE_SUFFIXES:
             continue
-        source = repo_root / rel
-        try:
-            resolved = source.resolve()
-            resolved.relative_to(repo_root)
-        except (OSError, ValueError):
+        if rel.is_absolute() or ".." in rel.parts:
             print(f"  Skipping README image outside the repository: {ref}")
             continue
-        walked = repo_root
-        behind_link = False
-        for part in resolved.relative_to(repo_root).parts if source == resolved else rel.parts:
-            walked = walked / part
-            if walked.is_symlink():
-                behind_link = True
-                break
-        if behind_link or source != resolved:
+        if _has_symlink_component(repo_root, rel):
             print(f"  Skipping README image behind a symbolic link: {ref}")
             continue
-        if not resolved.is_file():
+        source = repo_root / rel
+        if not source.is_file():
             print(f"  Warning: README image not found: {ref}")
             continue
-        if docs_dir == resolved or docs_dir in resolved.parents:
+        if docs_dir == source or docs_dir in source.parents:
             continue
-        dest = docs_dir / resolved.relative_to(repo_root)
+        if _has_symlink_component(docs_dir, rel):
+            print(f"  Skipping README image with a symbolic link at its destination: {ref}")
+            continue
+        dest = docs_dir / rel
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(resolved, dest)
+            shutil.copy2(source, dest)
             debug_print(f"  Copied README image {ref}")
         except OSError as e:
             print(f"Error copying README image {ref}: {e}")
