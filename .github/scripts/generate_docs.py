@@ -2315,6 +2315,81 @@ def create_favicon_files(docs_dir: Path, logos_dir: Path) -> bool:
         print(f"Error creating favicon files: {e}")
         return False
 
+README_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
+README_IMAGE_PATTERN = re.compile(
+    r'!\[[^\]]*\]\(\s*<?([^)\s>]+)|<img\b[^>]*?\bsrc\s*=\s*["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+
+
+def copy_readme_images(readme_path: Path, docs_dir: Path, repo_root: Path) -> bool:
+    """
+    Copies the local raster images that README.md references into the site.
+
+    index.html is built from README.md and keeps its relative image paths, but
+    only the documentation directory is published. Each referenced image that
+    is a regular file inside the repository is copied to the same relative
+    path under the documentation directory. Remote URLs, absolute paths, paths
+    that leave the repository, symbolic links and non-raster files are skipped.
+
+    Returns:
+        True if every eligible image was copied, False if a copy failed.
+    """
+    if not readme_path.exists():
+        return True
+    try:
+        content = readme_path.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"Error reading {readme_path}: {e}")
+        return False
+
+    repo_root = repo_root.resolve()
+    docs_dir = docs_dir.resolve()
+    ok = True
+    seen = set()
+    for match in README_IMAGE_PATTERN.finditer(content):
+        ref = (match.group(1) or match.group(2) or "").split("#", 1)[0].split("?", 1)[0]
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", ref) or ref.startswith(("/", "\\")):
+            continue
+        rel = Path(ref)
+        if rel.suffix.lower() not in README_IMAGE_SUFFIXES:
+            continue
+        source = repo_root / rel
+        try:
+            resolved = source.resolve()
+            resolved.relative_to(repo_root)
+        except (OSError, ValueError):
+            print(f"  Skipping README image outside the repository: {ref}")
+            continue
+        walked = repo_root
+        behind_link = False
+        for part in resolved.relative_to(repo_root).parts if source == resolved else rel.parts:
+            walked = walked / part
+            if walked.is_symlink():
+                behind_link = True
+                break
+        if behind_link or source != resolved:
+            print(f"  Skipping README image behind a symbolic link: {ref}")
+            continue
+        if not resolved.is_file():
+            print(f"  Warning: README image not found: {ref}")
+            continue
+        if docs_dir == resolved or docs_dir in resolved.parents:
+            continue
+        dest = docs_dir / resolved.relative_to(repo_root)
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(resolved, dest)
+            debug_print(f"  Copied README image {ref}")
+        except OSError as e:
+            print(f"Error copying README image {ref}: {e}")
+            ok = False
+    return ok
+
+
 def copy_assets(assets_dir: Path, docs_dir: Path) -> bool:
     """
     Copies all asset files (CSS, JavaScript, images, logos, and favicons) from the source assets directory to the documentation output directory, migrating legacy files and ensuring required assets are present.
@@ -2591,6 +2666,9 @@ def main() -> int:
         if not generate_index(README_PATH, INDEX_PATH, generated_files, DOCS_DIR, REPO_ROOT):
             print("Failed to generate index.html.")
             return 1
+
+        if not copy_readme_images(README_PATH, DOCS_DIR, REPO_ROOT):
+            failures += 1
         
         # Generate robots.txt and sitemap
         print("\nGenerating robots.txt...")
